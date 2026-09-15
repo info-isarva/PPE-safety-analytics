@@ -62,7 +62,7 @@ export function EventsTrendChart({ events }) {
           <p className="m-0 text-sm text-muted">No event timestamps available.</p>
         ) : (
           <ResponsiveContainer width="100%" height={160}>
-            <AreaChart data={data} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
+            <AreaChart data={data} margin={{ top: 8, right: 8, left: 4, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke={grid} vertical={false} />
               <XAxis
                 dataKey="day"
@@ -75,7 +75,8 @@ export function EventsTrendChart({ events }) {
                 tick={{ fill: tick, fontSize: 11 }}
                 axisLine={false}
                 tickLine={false}
-                width={36}
+                width={40}
+                tickMargin={6}
               />
               <Tooltip
                 contentStyle={{
