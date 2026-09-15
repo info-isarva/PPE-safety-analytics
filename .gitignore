@@ -1,0 +1,59 @@
+# Dependencies
+node_modules/
+
+# Build / Vite
+dist/
+dist-ssr/
+*.local
+
+# Desktop packaging (Electron)
+release/
+ppe-desktop-release/
+*.exe
+*.nsis.7z
+*.AppImage
+*.dmg
+*.blockmap
+
+# Env / secrets (keep .env.example)
+.env
+.env.*
+!.env.example
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Editor / OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Test / coverage
+coverage/
+.nyc_output/
+
+# Caches
+.cache/
+.eslintcache
+.oxlintcache
+*.tsbuildinfo
+
+# Optional local tooling
+*.pem
+*.key
+.turbo/
+.parcel-cache/
