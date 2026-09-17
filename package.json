@@ -12,7 +12,7 @@
     "lint": "oxlint",
     "preview": "vite preview",
     "electron:dev": "concurrently -k \"vite\" \"wait-on http://127.0.0.1:5173 && electron .\"",
-    "electron:build": "vite build && electron-builder --win --dir && node scripts/make-portable-zip.cjs",
+    "electron:build": "vite build --base ./ && electron-builder --win --dir && node scripts/make-portable-zip.cjs",
     "desktop": "npm run electron:build"
   },
   "dependencies": {
