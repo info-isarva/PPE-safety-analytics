@@ -1,4 +1,4 @@
-import { apiFetch, API_BASE_URL } from "./client";
+import { apiFetch, API_BASE_URL, resolveApiUrl, resolveStreamUrl } from "./client";
 
 export function getHealth() {
   return apiFetch("/health");
@@ -37,9 +37,7 @@ export function getEventsByType(eventType) {
 }
 
 export function getScreenshotUrl(screenshotPath) {
-  if (!screenshotPath) return null;
-  if (screenshotPath.startsWith("http")) return screenshotPath;
-  return `${API_BASE_URL}${screenshotPath.startsWith("/") ? "" : "/"}${screenshotPath}`;
+  return resolveApiUrl(screenshotPath);
 }
 
 /** Normalize API event types used across UI filters. */
@@ -50,3 +48,49 @@ export function isZoneEvent(type) {
 export function isPpeEvent(type) {
   return type === "PPE_VIOLATION";
 }
+
+/* ---------- Video processing (Day 2) ---------- */
+
+export function uploadVideo(file) {
+  const form = new FormData();
+  form.append("file", file);
+  return apiFetch("/video/upload", {
+    method: "POST",
+    body: form,
+  });
+}
+
+export function getVideoJob(jobId) {
+  return apiFetch(`/video/jobs/${jobId}`);
+}
+
+export function getLiveVideo() {
+  return apiFetch("/video/live");
+}
+
+export function getJobStreamUrl(jobIdOrStreamPath) {
+  if (!jobIdOrStreamPath) return null;
+  if (String(jobIdOrStreamPath).includes("/")) {
+    return resolveStreamUrl(jobIdOrStreamPath);
+  }
+  return resolveStreamUrl(`/video/jobs/${jobIdOrStreamPath}/stream`);
+}
+
+export function getJobZones(jobId) {
+  return apiFetch(`/video/jobs/${jobId}/zones`);
+}
+
+export function saveJobZones(jobId, payload) {
+  return apiFetch(`/video/jobs/${jobId}/zones`, {
+    method: "PUT",
+    json: payload,
+  });
+}
+
+export function stopVideoJob(jobId) {
+  return apiFetch(`/video/jobs/${jobId}/stop`, {
+    method: "POST",
+  });
+}
+
+export { API_BASE_URL };

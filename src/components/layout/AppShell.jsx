@@ -13,7 +13,7 @@ const NAV = [
 const PAGE_META = {
   "/": { title: "Overview", subtitle: "Compliance snapshot" },
   "/incidents": { title: "Incidents", subtitle: "Safety event feed" },
-  "/live": { title: "Live Monitor", subtitle: "Coming in Phase 11" },
+  "/live": { title: "Live Monitor", subtitle: "Upload · stream · zones" },
   "/reports": { title: "Reports", subtitle: "Coming in Phase 14" },
 };
 

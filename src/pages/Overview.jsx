@@ -94,7 +94,6 @@ export default function Overview() {
   }
 
   const compliance = Number(stats?.compliance_rate ?? 0);
-  const latestEvent = events[0] || null;
   const distribution = stats?.ppe_distribution || {};
 
   return (
@@ -182,7 +181,7 @@ export default function Overview() {
       </section>
 
       <section className="grid grid-cols-1 gap-4 xl:grid-cols-[1.7fr_1fr]">
-        <LiveFeedCard latestEvent={latestEvent} />
+        <LiveFeedCard />
         <RecentIncidentsList events={events} />
       </section>
 
