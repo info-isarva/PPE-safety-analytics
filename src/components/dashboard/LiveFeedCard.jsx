@@ -1,17 +1,27 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   getJobStreamUrl,
   getJobZones,
   getLiveVideo,
   getVideoJob,
   saveJobZones,
+  stopVideoJob,
   uploadVideo,
 } from "../../api/endpoints";
+import { useToast } from "../common/ToastContext";
 import {
   framePointsToOverlay,
   normalizeZonePoints,
   pointerToFrameCoords,
 } from "./liveFeedCoords";
+import {
+  formatBytes,
+  isMp4File,
+  loadJobHistory,
+  MAX_UPLOAD_BYTES,
+  rememberJob,
+  updateJobInHistory,
+} from "./jobHistory";
 
 const POLL_MS = 2000;
 const ACCEPT_VIDEO = ".mp4,video/mp4";
@@ -24,6 +34,7 @@ function statusTone(status) {
 }
 
 export function LiveFeedCard({ compact = false }) {
+  const toast = useToast();
   const fileInputRef = useRef(null);
   const mediaRef = useRef(null);
   const stageRef = useRef(null);
@@ -33,10 +44,13 @@ export function LiveFeedCard({ compact = false }) {
   const [streamUrl, setStreamUrl] = useState(null);
   const [label, setLabel] = useState(null);
   const [uploading, setUploading] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const [error, setError] = useState(null);
   const [streamError, setStreamError] = useState(false);
   const [frameSize, setFrameSize] = useState({ w: 0, h: 0 });
   const [overlayTick, setOverlayTick] = useState(0);
+  const [dragOver, setDragOver] = useState(false);
+  const [history, setHistory] = useState(() => loadJobHistory());
 
   const [drawing, setDrawing] = useState(false);
   const [draftPoints, setDraftPoints] = useState([]);
@@ -46,42 +60,60 @@ export function LiveFeedCard({ compact = false }) {
     name: "Restricted Area",
   });
   const [savingZone, setSavingZone] = useState(false);
-  const [zoneMessage, setZoneMessage] = useState(null);
 
   const status = job?.status || (streamUrl ? "processing" : "idle");
   const progress = Number(job?.progress ?? 0);
   const tone = statusTone(status);
+  const canStop =
+    Boolean(jobId) && (status === "queued" || status === "processing");
 
-  // Restore active live source on mount
+  const activateJob = useCallback((data, filename) => {
+    const id = data.job_id;
+    setJobId(id);
+    setJob(data);
+    setLabel(data.filename || filename || null);
+    setStreamUrl(getJobStreamUrl(data.stream_url || id));
+    setStreamError(false);
+    setError(null);
+    setDraftPoints([]);
+    setSavedPoints([]);
+    setDrawing(false);
+    setHistory(
+      rememberJob({
+        job_id: id,
+        filename: data.filename || filename,
+        status: data.status,
+        progress: data.progress,
+      })
+    );
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     async function bootstrap() {
       try {
         const live = await getLiveVideo();
         if (cancelled || !live?.active || !live?.job_id) return;
-        setJobId(live.job_id);
-        setLabel(live.label || null);
-        setStreamUrl(
-          getJobStreamUrl(live.stream_url || live.job_id)
+        activateJob(
+          {
+            job_id: live.job_id,
+            status: live.status,
+            source_type: live.source_type,
+            filename: live.label,
+            stream_url: live.stream_url,
+          },
+          live.label
         );
-        setJob({
-          job_id: live.job_id,
-          status: live.status,
-          source_type: live.source_type,
-          filename: live.label,
-          stream_url: live.stream_url,
-        });
       } catch {
-        /* idle is fine */
+        /* idle */
       }
     }
     bootstrap();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [activateJob]);
 
-  // Poll job status while active
   useEffect(() => {
     if (!jobId) return undefined;
     let cancelled = false;
@@ -91,7 +123,7 @@ export function LiveFeedCard({ compact = false }) {
         const data = await getVideoJob(jobId);
         if (cancelled) return;
         setJob(data);
-        setLabel(data.filename || label);
+        setLabel((prev) => data.filename || prev);
         if (data.stream_url) {
           setStreamUrl(getJobStreamUrl(data.stream_url));
         } else if (
@@ -101,8 +133,17 @@ export function LiveFeedCard({ compact = false }) {
         ) {
           setStreamUrl(getJobStreamUrl(jobId));
         }
+        setHistory(
+          updateJobInHistory(jobId, {
+            status: data.status,
+            progress: data.progress,
+            filename: data.filename,
+          })
+        );
         if (data.status === "failed") {
-          setError(data.error || "Video processing failed");
+          const msg = data.error || "Video processing failed";
+          setError(msg);
+          toast.error(msg);
         }
       } catch (err) {
         if (!cancelled) setError(err.message || "Failed to load job status");
@@ -115,9 +156,8 @@ export function LiveFeedCard({ compact = false }) {
       cancelled = true;
       clearInterval(id);
     };
-  }, [jobId]);
+  }, [jobId, toast]);
 
-  // Load saved zones when job is ready
   useEffect(() => {
     if (!jobId) return undefined;
     let cancelled = false;
@@ -143,7 +183,7 @@ export function LiveFeedCard({ compact = false }) {
           });
         }
       } catch {
-        /* no zones yet */
+        /* no zones */
       }
     }
 
@@ -153,7 +193,6 @@ export function LiveFeedCard({ compact = false }) {
     };
   }, [jobId]);
 
-  // Recompute overlay positions on resize / frame size change
   useEffect(() => {
     function onResize() {
       setOverlayTick((t) => t + 1);
@@ -161,6 +200,37 @@ export function LiveFeedCard({ compact = false }) {
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
+
+  const draftPointsRef = useRef(draftPoints);
+  draftPointsRef.current = draftPoints;
+
+  useEffect(() => {
+    function onKey(event) {
+      if (!drawing) return;
+      if (event.key === "Escape") {
+        setDrawing(false);
+        setDraftPoints([]);
+      }
+      if (event.key === "Enter") {
+        event.preventDefault();
+        const points = draftPointsRef.current;
+        if (points.length >= 3 && !savingZone) {
+          // trigger save via button path
+          document.getElementById("ppe-save-zone-btn")?.click();
+        }
+      }
+      if (
+        (event.key === "Backspace" || event.key === "Delete") &&
+        draftPointsRef.current.length
+      ) {
+        event.preventDefault();
+        setDraftPoints((prev) => prev.slice(0, -1));
+        setOverlayTick((t) => t + 1);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [drawing, savingZone]);
 
   const displayPoints = drawing ? draftPoints : savedPoints;
 
@@ -173,36 +243,55 @@ export function LiveFeedCard({ compact = false }) {
     );
   }, [displayPoints, overlayTick, frameSize.w, frameSize.h, streamUrl]);
 
-  async function handleFileChange(event) {
-    const file = event.target.files?.[0];
-    event.target.value = "";
+  async function processFile(file) {
     if (!file) return;
 
-    if (!file.name.toLowerCase().endsWith(".mp4") && file.type !== "video/mp4") {
-      setError("Please upload an .mp4 video file.");
+    if (!isMp4File(file)) {
+      const msg = "Please upload an .mp4 video file.";
+      setError(msg);
+      toast.error(msg);
+      return;
+    }
+
+    if (file.size > MAX_UPLOAD_BYTES) {
+      const msg = `File is too large (max ${formatBytes(MAX_UPLOAD_BYTES)}).`;
+      setError(msg);
+      toast.error(msg);
       return;
     }
 
     setUploading(true);
     setError(null);
     setStreamError(false);
-    setZoneMessage(null);
     setDraftPoints([]);
     setSavedPoints([]);
     setDrawing(false);
 
     try {
       const result = await uploadVideo(file);
-      const id = result.job_id;
-      setJobId(id);
-      setJob(result);
-      setLabel(result.filename || file.name);
-      setStreamUrl(getJobStreamUrl(result.stream_url || id));
+      activateJob(result, file.name);
+      toast.success(`Uploaded ${result.filename || file.name}`);
     } catch (err) {
-      setError(err.message || "Upload failed");
+      const msg = err.message || "Upload failed";
+      setError(msg);
+      toast.error(msg);
     } finally {
       setUploading(false);
     }
+  }
+
+  function handleFileChange(event) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    processFile(file);
+  }
+
+  function onDrop(event) {
+    event.preventDefault();
+    setDragOver(false);
+    if (drawing || uploading) return;
+    const file = event.dataTransfer.files?.[0];
+    processFile(file);
   }
 
   function onMediaLoad() {
@@ -226,19 +315,17 @@ export function LiveFeedCard({ compact = false }) {
 
   function startDrawing() {
     if (!streamUrl || !jobId) {
-      setError("Upload and start a video before drawing a zone.");
+      toast.info("Upload a video before drawing a zone.");
       return;
     }
     setDrawing(true);
     setDraftPoints(savedPoints.length ? [...savedPoints] : []);
-    setZoneMessage(null);
     setError(null);
   }
 
   function cancelDrawing() {
     setDrawing(false);
     setDraftPoints([]);
-    setZoneMessage(null);
   }
 
   function clearDraft() {
@@ -249,7 +336,7 @@ export function LiveFeedCard({ compact = false }) {
   async function saveZone() {
     if (!jobId) return;
     if (draftPoints.length < 3) {
-      setZoneMessage("Add at least 3 points to form a polygon.");
+      toast.error("Add at least 3 points to form a polygon.");
       return;
     }
 
@@ -257,12 +344,11 @@ export function LiveFeedCard({ compact = false }) {
     const w = frameSize.w || el?.naturalWidth || 0;
     const h = frameSize.h || el?.naturalHeight || 0;
     if (!w || !h) {
-      setZoneMessage("Waiting for video frame size. Try again in a moment.");
+      toast.info("Waiting for video frame size. Try again in a moment.");
       return;
     }
 
     setSavingZone(true);
-    setZoneMessage(null);
     try {
       const payload = {
         zones: [
@@ -280,16 +366,10 @@ export function LiveFeedCard({ compact = false }) {
       const result = await saveJobZones(jobId, payload);
       setSavedPoints(draftPoints);
       setDrawing(false);
-      setZoneMessage(result?.message || "Restricted zone saved.");
-      // Refresh stream cache so overlay updates from AI
-      setStreamUrl((prev) => {
-        if (!prev) return prev;
-        const u = new URL(prev, window.location.href);
-        u.searchParams.set("_t", String(Date.now()));
-        return u.toString();
-      });
+      toast.success(result?.message || "Restricted zone saved.");
+      setStreamUrl((prev) => bumpStreamCache(prev));
     } catch (err) {
-      setZoneMessage(err.message || "Failed to save zone");
+      toast.error(err.message || "Failed to save zone");
     } finally {
       setSavingZone(false);
     }
@@ -298,7 +378,6 @@ export function LiveFeedCard({ compact = false }) {
   async function clearSavedZone() {
     if (!jobId) return;
     setSavingZone(true);
-    setZoneMessage(null);
     try {
       const el = mediaRef.current;
       const w = frameSize.w || el?.naturalWidth || 1920;
@@ -319,15 +398,42 @@ export function LiveFeedCard({ compact = false }) {
       setSavedPoints([]);
       setDraftPoints([]);
       setDrawing(false);
-      setZoneMessage("Restricted zone cleared.");
+      toast.success("Restricted zone cleared.");
     } catch (err) {
-      // If backend rejects empty points, still clear local UI
       setSavedPoints([]);
       setDraftPoints([]);
       setDrawing(false);
-      setZoneMessage(err.message || "Zone cleared locally.");
+      toast.info(err.message || "Zone cleared locally.");
     } finally {
       setSavingZone(false);
+    }
+  }
+
+  async function handleStop() {
+    if (!jobId || !canStop) return;
+    setStopping(true);
+    try {
+      const result = await stopVideoJob(jobId);
+      setJob((prev) => ({ ...prev, ...result, status: result.status || "cancelled" }));
+      setHistory(
+        updateJobInHistory(jobId, { status: result.status || "cancelled" })
+      );
+      toast.info("Processing stopped.");
+    } catch (err) {
+      toast.error(err.message || "Could not stop job");
+    } finally {
+      setStopping(false);
+    }
+  }
+
+  async function reopenJob(entry) {
+    if (!entry?.job_id || uploading) return;
+    try {
+      const data = await getVideoJob(entry.job_id);
+      activateJob(data, entry.filename);
+      toast.info(`Opened ${data.filename || entry.filename}`);
+    } catch (err) {
+      toast.error(err.message || "Could not open job");
     }
   }
 
@@ -336,242 +442,347 @@ export function LiveFeedCard({ compact = false }) {
     Boolean(streamUrl) && status !== "failed" && status !== "cancelled";
 
   return (
-    <section
-      className={`flex h-full flex-col overflow-hidden rounded-2xl border border-line bg-panel shadow-sm ${
-        compact ? "" : ""
+    <div
+      className={`grid h-full gap-3 ${
+        compact ? "lg:grid-cols-[minmax(0,1fr)_240px]" : "grid-cols-1"
       }`}
     >
-      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-line px-4 py-3">
-        <div className="min-w-0">
-          <h3 className="m-0 text-sm font-semibold text-ink">Live Feed</h3>
-          <p className="m-0 text-xs text-muted">
-            {label
-              ? `AI-annotated stream · ${label}`
-              : "Upload an .mp4 to start live AI monitoring"}
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <StatusChip status={status} tone={tone} progress={progress} />
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept={ACCEPT_VIDEO}
-            className="hidden"
-            onChange={handleFileChange}
-          />
-          <button
-            type="button"
-            disabled={uploading}
-            onClick={() => fileInputRef.current?.click()}
-            className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-line bg-elevated px-3 py-1.5 text-xs font-semibold text-ink transition-colors hover:border-accent/40 hover:bg-accent-soft disabled:cursor-wait disabled:opacity-70"
-          >
-            <UploadIcon className="h-3.5 w-3.5 text-accent" />
-            {uploading ? "Uploading…" : "Upload Video"}
-          </button>
-        </div>
-      </div>
-
-      {(status === "queued" || status === "processing") && progress > 0 ? (
-        <div className="border-b border-line px-4 py-2">
-          <div className="flex items-center justify-between text-[0.7rem] font-semibold text-muted">
-            <span>Processing</span>
-            <span>{Math.round(progress)}%</span>
-          </div>
-          <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-line">
-            <div
-              className="h-full rounded-full bg-accent transition-all duration-500"
-              style={{ width: `${Math.min(100, progress)}%` }}
-            />
-          </div>
-        </div>
-      ) : null}
-
-      {error ? (
-        <p className="m-0 border-b border-line bg-danger-soft px-4 py-2 text-xs text-danger">
-          {error}
-        </p>
-      ) : null}
-
-      <div
-        ref={stageRef}
-        className={`relative flex flex-1 items-center justify-center bg-[#0b1220] ${
-          compact ? "min-h-[320px]" : "min-h-[280px] sm:min-h-[360px]"
-        } ${drawing ? "cursor-crosshair" : ""}`}
-        onClick={handleStageClick}
-      >
-        {showStream && !streamError ? (
-          <img
-            ref={mediaRef}
-            src={streamUrl}
-            alt="AI annotated live feed"
-            className="max-h-[520px] w-full object-contain"
-            onLoad={onMediaLoad}
-            onError={() => {
-              // MJPEG may fail briefly while job is still queued
-              if (status === "processing" || status === "completed") {
-                setStreamError(true);
-              }
-            }}
-          />
-        ) : showStream && streamError ? (
-          <div className="flex flex-col items-center gap-2 p-6 text-center">
-            <p className="m-0 text-sm font-medium text-ink">Stream unavailable</p>
+      <section className="flex min-w-0 flex-col overflow-hidden rounded-2xl border border-line bg-panel shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-line px-4 py-3">
+          <div className="min-w-0">
+            <h3 className="m-0 text-sm font-semibold text-ink">Live Feed</h3>
             <p className="m-0 text-xs text-muted">
-              Job is {status}. Retrying may help once processing advances.
+              {label
+                ? `AI-annotated stream · ${label}`
+                : "Drop an .mp4 or click Upload to start"}
             </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <StatusChip status={status} tone={tone} progress={progress} />
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept={ACCEPT_VIDEO}
+              className="hidden"
+              onChange={handleFileChange}
+            />
             <button
               type="button"
-              className="rounded-xl border border-line px-3 py-1.5 text-xs font-semibold text-ink hover:bg-elevated"
-              onClick={() => {
-                setStreamError(false);
-                setStreamUrl((prev) => {
-                  if (!prev) return prev;
-                  try {
-                    const u = new URL(prev);
-                    u.searchParams.set("_t", String(Date.now()));
-                    return u.toString();
-                  } catch {
-                    return `${prev}${prev.includes("?") ? "&" : "?"}_t=${Date.now()}`;
-                  }
-                });
-              }}
+              disabled={uploading}
+              onClick={() => fileInputRef.current?.click()}
+              className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-line bg-elevated px-3 py-1.5 text-xs font-semibold text-ink transition-colors hover:border-accent/40 hover:bg-accent-soft disabled:cursor-wait disabled:opacity-70"
             >
-              Retry stream
+              <UploadIcon className="h-3.5 w-3.5 text-accent" />
+              {uploading ? "Uploading…" : "Upload Video"}
             </button>
-          </div>
-        ) : (
-          <EmptyFeed
-            uploading={uploading}
-            failed={false}
-            onUpload={() => fileInputRef.current?.click()}
-          />
-        )}
-
-        {overlayPoints.length > 0 ? (
-          <svg
-            className="pointer-events-none absolute inset-0 h-full w-full"
-            aria-hidden="true"
-          >
-            {overlayPoints.length >= 3 ? (
-              <polygon
-                points={polygonPointsAttr}
-                fill={drawing ? "rgba(220,38,38,0.22)" : "rgba(220,38,38,0.18)"}
-                stroke="#dc2626"
-                strokeWidth="2"
-                strokeDasharray={drawing ? "6 4" : "0"}
-              />
-            ) : null}
-            {overlayPoints.map((p, i) => (
-              <g key={`${p.x}-${p.y}-${i}`}>
-                <circle cx={p.x} cy={p.y} r="5" fill="#dc2626" stroke="#fff" strokeWidth="1.5" />
-                <text
-                  x={p.x + 8}
-                  y={p.y - 8}
-                  fill="#fff"
-                  fontSize="11"
-                  fontWeight="600"
-                >
-                  {i + 1}
-                </text>
-              </g>
-            ))}
-            {drawing && overlayPoints.length >= 2 ? (
-              <polyline
-                points={polygonPointsAttr}
-                fill="none"
-                stroke="#dc2626"
-                strokeWidth="2"
-                strokeDasharray="6 4"
-              />
-            ) : null}
-          </svg>
-        ) : null}
-
-        {drawing ? (
-          <div className="pointer-events-none absolute left-3 top-3 rounded-lg bg-black/60 px-2.5 py-1.5 text-[0.7rem] font-semibold text-white">
-            Click to add points · {draftPoints.length} point
-            {draftPoints.length === 1 ? "" : "s"}
-          </div>
-        ) : null}
-      </div>
-
-      <div className="flex flex-col gap-2 border-t border-line px-4 py-3">
-        <div className="flex flex-wrap items-center gap-2">
-          {!drawing ? (
-            <>
+            {canStop ? (
               <button
                 type="button"
-                disabled={!jobId || !streamUrl}
-                onClick={startDrawing}
-                className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-accent px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={stopping}
+                onClick={handleStop}
+                className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-danger/30 bg-danger-soft px-3 py-1.5 text-xs font-semibold text-danger hover:opacity-90 disabled:opacity-60"
               >
-                <PolygonIcon className="h-3.5 w-3.5" />
-                Draw Restricted Zone
+                {stopping ? "Stopping…" : "Stop"}
               </button>
-              {savedPoints.length > 0 ? (
+            ) : null}
+          </div>
+        </div>
+
+        {(status === "queued" || status === "processing") && (
+          <div className="border-b border-line px-4 py-2">
+            <div className="flex items-center justify-between text-[0.7rem] font-semibold text-muted">
+              <span>{status === "queued" ? "Queued" : "Processing"}</span>
+              <span>{Math.round(progress)}%</span>
+            </div>
+            <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-line">
+              <div
+                className="h-full rounded-full bg-accent transition-all duration-500"
+                style={{ width: `${Math.min(100, Math.max(progress, 4))}%` }}
+              />
+            </div>
+          </div>
+        )}
+
+        {error ? (
+          <p className="m-0 border-b border-line bg-danger-soft px-4 py-2 text-xs text-danger">
+            {error}
+          </p>
+        ) : null}
+
+        <div
+          ref={stageRef}
+          className={`relative flex flex-1 items-center justify-center bg-[#0b1220] transition-colors ${
+            compact ? "min-h-[360px]" : "min-h-[280px] sm:min-h-[360px]"
+          } ${drawing ? "cursor-crosshair" : ""} ${
+            dragOver ? "ring-2 ring-inset ring-accent" : ""
+          }`}
+          onClick={handleStageClick}
+          onDragEnter={(e) => {
+            e.preventDefault();
+            if (!drawing) setDragOver(true);
+          }}
+          onDragOver={(e) => {
+            e.preventDefault();
+          }}
+          onDragLeave={(e) => {
+            if (!stageRef.current?.contains(e.relatedTarget)) {
+              setDragOver(false);
+            }
+          }}
+          onDrop={onDrop}
+        >
+          {dragOver ? (
+            <div className="pointer-events-none absolute inset-0 z-10 grid place-items-center bg-accent/15">
+              <p className="m-0 rounded-xl bg-panel px-4 py-2 text-sm font-semibold text-ink shadow">
+                Drop .mp4 to upload
+              </p>
+            </div>
+          ) : null}
+
+          {showStream && !streamError ? (
+            <img
+              ref={mediaRef}
+              src={streamUrl}
+              alt="AI annotated live feed"
+              className="max-h-[520px] w-full object-contain"
+              onLoad={onMediaLoad}
+              onError={() => {
+                if (status === "processing" || status === "completed") {
+                  setStreamError(true);
+                }
+              }}
+            />
+          ) : showStream && streamError ? (
+            <div className="flex flex-col items-center gap-2 p-6 text-center">
+              <p className="m-0 text-sm font-medium text-ink">Stream unavailable</p>
+              <p className="m-0 text-xs text-muted">
+                Job is {status}. Retry once processing advances.
+              </p>
+              <button
+                type="button"
+                className="rounded-xl border border-line px-3 py-1.5 text-xs font-semibold text-ink hover:bg-elevated"
+                onClick={() => {
+                  setStreamError(false);
+                  setStreamUrl((prev) => bumpStreamCache(prev));
+                }}
+              >
+                Retry stream
+              </button>
+            </div>
+          ) : (
+            <EmptyFeed
+              uploading={uploading}
+              onUpload={() => fileInputRef.current?.click()}
+            />
+          )}
+
+          {overlayPoints.length > 0 ? (
+            <svg
+              className="pointer-events-none absolute inset-0 h-full w-full"
+              aria-hidden="true"
+            >
+              {overlayPoints.length >= 3 ? (
+                <polygon
+                  points={polygonPointsAttr}
+                  fill={
+                    drawing ? "rgba(220,38,38,0.22)" : "rgba(220,38,38,0.18)"
+                  }
+                  stroke="#dc2626"
+                  strokeWidth="2"
+                  strokeDasharray={drawing ? "6 4" : "0"}
+                />
+              ) : null}
+              {overlayPoints.map((p, i) => (
+                <g key={`${p.x}-${p.y}-${i}`}>
+                  <circle
+                    cx={p.x}
+                    cy={p.y}
+                    r="5"
+                    fill="#dc2626"
+                    stroke="#fff"
+                    strokeWidth="1.5"
+                  />
+                  <text
+                    x={p.x + 8}
+                    y={p.y - 8}
+                    fill="#fff"
+                    fontSize="11"
+                    fontWeight="600"
+                  >
+                    {i + 1}
+                  </text>
+                </g>
+              ))}
+              {drawing && overlayPoints.length >= 2 ? (
+                <polyline
+                  points={polygonPointsAttr}
+                  fill="none"
+                  stroke="#dc2626"
+                  strokeWidth="2"
+                  strokeDasharray="6 4"
+                />
+              ) : null}
+            </svg>
+          ) : null}
+
+          {drawing ? (
+            <div className="pointer-events-none absolute left-3 top-3 rounded-lg bg-black/60 px-2.5 py-1.5 text-[0.7rem] font-semibold text-white">
+              Click points · Enter save · Esc cancel · {draftPoints.length} pts
+            </div>
+          ) : null}
+        </div>
+
+        <div className="flex flex-col gap-2 border-t border-line px-4 py-3">
+          <div className="flex flex-wrap items-center gap-2">
+            {!drawing ? (
+              <>
+                <button
+                  type="button"
+                  disabled={!jobId || !streamUrl}
+                  onClick={startDrawing}
+                  className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-accent px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <PolygonIcon className="h-3.5 w-3.5" />
+                  Draw Restricted Zone
+                </button>
+                {savedPoints.length > 0 ? (
+                  <button
+                    type="button"
+                    disabled={savingZone}
+                    onClick={clearSavedZone}
+                    className="inline-flex cursor-pointer items-center rounded-xl border border-line px-3 py-1.5 text-xs font-semibold text-muted hover:bg-elevated disabled:opacity-50"
+                  >
+                    Clear Zone
+                  </button>
+                ) : null}
+              </>
+            ) : (
+              <>
+                <button
+                  id="ppe-save-zone-btn"
+                  type="button"
+                  disabled={savingZone || draftPoints.length < 3}
+                  onClick={saveZone}
+                  className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-accent px-3 py-1.5 text-xs font-semibold text-white hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {savingZone ? "Saving…" : "Save Zone"}
+                </button>
                 <button
                   type="button"
                   disabled={savingZone}
-                  onClick={clearSavedZone}
-                  className="inline-flex cursor-pointer items-center rounded-xl border border-line px-3 py-1.5 text-xs font-semibold text-muted hover:bg-elevated disabled:opacity-50"
+                  onClick={clearDraft}
+                  className="inline-flex cursor-pointer items-center rounded-xl border border-line px-3 py-1.5 text-xs font-semibold text-muted hover:bg-elevated"
                 >
-                  Clear Zone
+                  Clear Points
                 </button>
-              ) : null}
-            </>
-          ) : (
-            <>
-              <button
-                type="button"
-                disabled={savingZone || draftPoints.length < 3}
-                onClick={saveZone}
-                className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-accent px-3 py-1.5 text-xs font-semibold text-white hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {savingZone ? "Saving…" : "Save Zone"}
-              </button>
-              <button
-                type="button"
-                disabled={savingZone}
-                onClick={clearDraft}
-                className="inline-flex cursor-pointer items-center rounded-xl border border-line px-3 py-1.5 text-xs font-semibold text-muted hover:bg-elevated"
-              >
-                Clear Points
-              </button>
-              <button
-                type="button"
-                disabled={savingZone}
-                onClick={cancelDrawing}
-                className="inline-flex cursor-pointer items-center rounded-xl border border-line px-3 py-1.5 text-xs font-semibold text-muted hover:bg-elevated"
-              >
-                Cancel
-              </button>
-            </>
-          )}
-          {frameSize.w > 0 ? (
-            <span className="ml-auto text-[0.7rem] text-dim">
-              Frame {frameSize.w}×{frameSize.h}
-            </span>
-          ) : null}
-        </div>
-        {zoneMessage ? (
-          <p
-            className={`m-0 text-xs ${
-              zoneMessage.toLowerCase().includes("fail") ||
-              zoneMessage.toLowerCase().includes("least")
-                ? "text-danger"
-                : "text-ok"
-            }`}
-          >
-            {zoneMessage}
-          </p>
-        ) : (
+                <button
+                  type="button"
+                  disabled={savingZone}
+                  onClick={cancelDrawing}
+                  className="inline-flex cursor-pointer items-center rounded-xl border border-line px-3 py-1.5 text-xs font-semibold text-muted hover:bg-elevated"
+                >
+                  Cancel
+                </button>
+              </>
+            )}
+            {frameSize.w > 0 ? (
+              <span className="ml-auto text-[0.7rem] text-dim">
+                Frame {frameSize.w}×{frameSize.h}
+              </span>
+            ) : null}
+          </div>
           <p className="m-0 text-[0.7rem] text-muted">
-            Screenshots stay on Incidents as evidence. Live Feed shows AI video
-            only.
+            Max upload {formatBytes(MAX_UPLOAD_BYTES)}. Screenshots stay on
+            Incidents as evidence only.
           </p>
-        )}
-      </div>
-    </section>
+        </div>
+      </section>
+
+      {compact ? (
+        <JobHistoryPanel
+          history={history}
+          activeId={jobId}
+          onOpen={reopenJob}
+          disabled={uploading}
+        />
+      ) : history.length > 0 ? (
+        <div className="rounded-2xl border border-line bg-panel px-3 py-2 shadow-sm">
+          <p className="m-0 mb-2 text-[0.7rem] font-semibold uppercase tracking-wide text-muted">
+            Recent jobs
+          </p>
+          <div className="flex gap-2 overflow-x-auto pb-1">
+            {history.slice(0, 5).map((item) => (
+              <button
+                key={item.job_id}
+                type="button"
+                disabled={uploading}
+                onClick={() => reopenJob(item)}
+                className={`shrink-0 cursor-pointer rounded-xl border px-2.5 py-1.5 text-left text-xs transition-colors ${
+                  item.job_id === jobId
+                    ? "border-accent bg-accent-soft"
+                    : "border-line hover:bg-elevated"
+                }`}
+              >
+                <span className="block max-w-[9rem] truncate font-semibold text-ink">
+                  {item.filename}
+                </span>
+                <span className="text-dim">{item.status}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function bumpStreamCache(prev) {
+  if (!prev) return prev;
+  try {
+    const u = new URL(prev, window.location.href);
+    u.searchParams.set("_t", String(Date.now()));
+    return u.toString();
+  } catch {
+    return `${prev}${prev.includes("?") ? "&" : "?"}_t=${Date.now()}`;
+  }
+}
+
+function JobHistoryPanel({ history, activeId, onOpen, disabled }) {
+  return (
+    <aside className="rounded-2xl border border-line bg-panel p-3 shadow-sm">
+      <h4 className="m-0 text-sm font-semibold text-ink">Job history</h4>
+      <p className="m-0 mt-0.5 text-[0.7rem] text-muted">
+        Reopen a recent upload
+      </p>
+      {history.length === 0 ? (
+        <p className="mt-4 m-0 text-xs text-muted">No jobs yet.</p>
+      ) : (
+        <ul className="m-0 mt-3 flex list-none flex-col gap-2 p-0">
+          {history.map((item) => (
+            <li key={item.job_id}>
+              <button
+                type="button"
+                disabled={disabled}
+                onClick={() => onOpen(item)}
+                className={`w-full cursor-pointer rounded-xl border px-2.5 py-2 text-left transition-colors ${
+                  item.job_id === activeId
+                    ? "border-accent bg-accent-soft"
+                    : "border-line hover:bg-elevated"
+                }`}
+              >
+                <span className="block truncate text-xs font-semibold text-ink">
+                  {item.filename}
+                </span>
+                <span className="mt-0.5 flex items-center justify-between gap-2 text-[0.65rem] text-muted">
+                  <span className="truncate font-mono">{item.job_id}</span>
+                  <span>{item.status}</span>
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </aside>
   );
 }
 
@@ -610,22 +821,17 @@ function StatusChip({ status, tone, progress }) {
   );
 }
 
-function EmptyFeed({ uploading, failed, onUpload }) {
+function EmptyFeed({ uploading, onUpload }) {
   return (
     <div className="flex flex-col items-center justify-center gap-3 p-6 text-center">
       <div className="grid h-16 w-16 place-items-center rounded-2xl bg-panel text-muted shadow-sm">
         <CameraIcon className="h-7 w-7" />
       </div>
       <p className="m-0 text-sm font-medium text-ink">
-        {failed
-          ? "Could not load live stream"
-          : uploading
-            ? "Uploading video…"
-            : "No live stream yet"}
+        {uploading ? "Uploading video…" : "Drop an .mp4 here"}
       </p>
       <p className="m-0 max-w-sm text-xs text-muted">
-        Upload an .mp4 to process with YOLO. The Live Feed will show annotated
-        frames with detections and zones — not incident screenshots.
+        AI-annotated stream with detections and zones. Not incident screenshots.
       </p>
       <button
         type="button"

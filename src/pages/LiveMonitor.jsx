@@ -4,9 +4,10 @@ export default function LiveMonitor() {
   return (
     <div className="flex w-full flex-col gap-4">
       <div>
-        <p className="m-0 text-sm text-muted">
-          Upload a site video, watch the AI-annotated stream, and draw restricted
-          zones on the Live Feed. Incident screenshots remain evidence only.
+        <h2 className="m-0 text-lg font-semibold text-ink">Live Monitor</h2>
+        <p className="m-0 mt-1 text-sm text-muted">
+          Drag-and-drop an .mp4, watch the AI stream, stop jobs, and draw
+          restricted zones. Recent uploads appear in the job history.
         </p>
       </div>
       <LiveFeedCard compact />
