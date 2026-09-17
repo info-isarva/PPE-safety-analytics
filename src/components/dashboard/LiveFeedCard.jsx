@@ -669,8 +669,8 @@ export function LiveFeedCard({ compact = false }) {
               />
               {!processedOk ? (
                 <p className="m-0 max-w-md text-center text-xs text-muted">
-                  Backend `/stream` sent no frames for this completed job, and
-                  `/video/processed/{filename}` was not found. Please keep
+                  Backend /stream sent no frames for this completed job, and
+                  /video/processed/&lt;filename&gt; was not found. Please keep
                   annotated frames available after completion, or return a
                   working processed video path on the job.
                 </p>
