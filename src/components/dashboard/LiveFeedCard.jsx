@@ -3,12 +3,16 @@ import {
   getJobStreamUrl,
   getJobZones,
   getLiveVideo,
+  getProcessedVideoUrl,
   getVideoJob,
+  getVideoJobs,
   saveJobZones,
   stopVideoJob,
   uploadVideo,
 } from "../../api/endpoints";
 import { useToast } from "../common/ToastContext";
+import { MjpegStreamPlayer } from "./MjpegStreamPlayer";
+import { ProcessedVideoPlayer } from "./ProcessedVideoPlayer";
 import {
   framePointsToOverlay,
   normalizeZonePoints,
@@ -17,13 +21,14 @@ import {
 import {
   formatBytes,
   isMp4File,
-  loadJobHistory,
   MAX_UPLOAD_BYTES,
-  rememberJob,
-  updateJobInHistory,
+  normalizeJobsList,
+  patchJobInList,
+  upsertJobInList,
 } from "./jobHistory";
 
 const POLL_MS = 2000;
+const HISTORY_POLL_MS = 8000;
 const ACCEPT_VIDEO = ".mp4,video/mp4";
 
 function statusTone(status) {
@@ -47,10 +52,15 @@ export function LiveFeedCard({ compact = false }) {
   const [stopping, setStopping] = useState(false);
   const [error, setError] = useState(null);
   const [streamError, setStreamError] = useState(false);
+  const [streamEmpty, setStreamEmpty] = useState(false);
+  const [processedUrl, setProcessedUrl] = useState(null);
+  const [processedOk, setProcessedOk] = useState(false);
   const [frameSize, setFrameSize] = useState({ w: 0, h: 0 });
   const [overlayTick, setOverlayTick] = useState(0);
   const [dragOver, setDragOver] = useState(false);
-  const [history, setHistory] = useState(() => loadJobHistory());
+  const [history, setHistory] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const [historyError, setHistoryError] = useState(null);
 
   const [drawing, setDrawing] = useState(false);
   const [draftPoints, setDraftPoints] = useState([]);
@@ -67,23 +77,64 @@ export function LiveFeedCard({ compact = false }) {
   const canStop =
     Boolean(jobId) && (status === "queued" || status === "processing");
 
+  const refreshHistory = useCallback(async () => {
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 8000);
+    try {
+      const data = await getVideoJobs({ signal: controller.signal });
+      setHistory(normalizeJobsList(data));
+      setHistoryError(null);
+    } catch (err) {
+      if (err?.name === "AbortError") {
+        setHistoryError("Job list timed out. Backend /video/jobs may be busy.");
+      } else {
+        setHistoryError(err.message || "Could not load job history");
+      }
+    } finally {
+      window.clearTimeout(timeoutId);
+      setHistoryLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      if (!cancelled) await refreshHistory();
+    }
+    load();
+    const id = setInterval(() => {
+      if (!cancelled) refreshHistory();
+    }, HISTORY_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [refreshHistory]);
+
   const activateJob = useCallback((data, filename) => {
     const id = data.job_id;
+    const name = data.filename || filename || null;
     setJobId(id);
     setJob(data);
-    setLabel(data.filename || filename || null);
+    setLabel(name);
     setStreamUrl(getJobStreamUrl(data.stream_url || id));
+    setProcessedUrl(getProcessedVideoUrl(name));
+    setProcessedOk(false);
     setStreamError(false);
+    setStreamEmpty(false);
     setError(null);
     setDraftPoints([]);
     setSavedPoints([]);
     setDrawing(false);
-    setHistory(
-      rememberJob({
+    setHistory((prev) =>
+      upsertJobInList(prev, {
         job_id: id,
-        filename: data.filename || filename,
+        filename: name,
         status: data.status,
         progress: data.progress,
+        source_type: data.source_type,
+        stream_url: data.stream_url,
+        started_at: data.started_at,
       })
     );
   }, []);
@@ -124,20 +175,30 @@ export function LiveFeedCard({ compact = false }) {
         if (cancelled) return;
         setJob(data);
         setLabel((prev) => data.filename || prev);
+        if (data.filename) {
+          setProcessedUrl(getProcessedVideoUrl(data.filename));
+        }
         if (data.stream_url) {
-          setStreamUrl(getJobStreamUrl(data.stream_url));
+          const next = getJobStreamUrl(data.stream_url);
+          setStreamUrl((prev) => (prev === next ? prev : next));
         } else if (
           data.status === "processing" ||
           data.status === "queued" ||
           data.status === "completed"
         ) {
-          setStreamUrl(getJobStreamUrl(jobId));
+          const next = getJobStreamUrl(jobId);
+          setStreamUrl((prev) => (prev === next ? prev : next));
         }
-        setHistory(
-          updateJobInHistory(jobId, {
+        if (data.status === "completed") {
+          // Completed jobs often stop sending MJPEG frames
+          setStreamEmpty(false);
+        }
+        setHistory((prev) =>
+          patchJobInList(prev, jobId, {
             status: data.status,
             progress: data.progress,
             filename: data.filename,
+            stream_url: data.stream_url,
           })
         );
         if (data.status === "failed") {
@@ -271,6 +332,7 @@ export function LiveFeedCard({ compact = false }) {
       const result = await uploadVideo(file);
       activateJob(result, file.name);
       toast.success(`Uploaded ${result.filename || file.name}`);
+      refreshHistory();
     } catch (err) {
       const msg = err.message || "Upload failed";
       setError(msg);
@@ -297,12 +359,44 @@ export function LiveFeedCard({ compact = false }) {
   function onMediaLoad() {
     const el = mediaRef.current;
     if (!el) return;
-    const w = el.naturalWidth || 0;
-    const h = el.naturalHeight || 0;
-    if (w && h) setFrameSize({ w, h });
+    const w = el.naturalWidth || el.videoWidth || 0;
+    const h = el.naturalHeight || el.videoHeight || 0;
+    if (w && h) {
+      setFrameSize((prev) =>
+        prev.w === w && prev.h === h ? prev : { w, h }
+      );
+    }
     setStreamError(false);
     setOverlayTick((t) => t + 1);
   }
+
+  // Stable callbacks so stream player does not reconnect every render
+  const onMediaLoadRef = useRef(onMediaLoad);
+  onMediaLoadRef.current = onMediaLoad;
+  const statusRef = useRef(status);
+  statusRef.current = status;
+
+  const handleStreamFrame = useCallback(() => {
+    onMediaLoadRef.current();
+  }, []);
+
+  const handleStreamEmpty = useCallback(() => {
+    setStreamEmpty(true);
+    if (statusRef.current === "completed") {
+      setProcessedOk(false);
+    } else {
+      setStreamError(true);
+    }
+  }, []);
+
+  const handleStreamError = useCallback(() => {
+    if (statusRef.current === "completed") {
+      setStreamEmpty(true);
+    } else {
+      setStreamError(true);
+    }
+  }, []);
+
 
   function handleStageClick(event) {
     if (!drawing) return;
@@ -415,10 +509,11 @@ export function LiveFeedCard({ compact = false }) {
     try {
       const result = await stopVideoJob(jobId);
       setJob((prev) => ({ ...prev, ...result, status: result.status || "cancelled" }));
-      setHistory(
-        updateJobInHistory(jobId, { status: result.status || "cancelled" })
+      setHistory((prev) =>
+        patchJobInList(prev, jobId, { status: result.status || "cancelled" })
       );
       toast.info("Processing stopped.");
+      refreshHistory();
     } catch (err) {
       toast.error(err.message || "Could not stop job");
     } finally {
@@ -539,30 +634,76 @@ export function LiveFeedCard({ compact = false }) {
             </div>
           ) : null}
 
-          {showStream && !streamError ? (
-            <img
-              ref={mediaRef}
-              src={streamUrl}
+          {showStream && !streamError && !streamEmpty ? (
+            <MjpegStreamPlayer
+              key={jobId || streamUrl}
+              url={streamUrl}
+              mediaRef={mediaRef}
               alt="AI annotated live feed"
               className="max-h-[520px] w-full object-contain"
-              onLoad={onMediaLoad}
-              onError={() => {
-                if (status === "processing" || status === "completed") {
-                  setStreamError(true);
-                }
-              }}
+              onFrame={handleStreamFrame}
+              onEmpty={handleStreamEmpty}
+              onError={handleStreamError}
             />
-          ) : showStream && streamError ? (
+          ) : showStream && (streamEmpty || streamError) && processedUrl ? (
+            <div className="flex w-full flex-col items-center gap-2 p-3">
+              {status === "completed" ? (
+                <p className="m-0 text-center text-xs text-muted">
+                  Live frame stream ended after processing. Trying saved video…
+                </p>
+              ) : null}
+              <ProcessedVideoPlayer
+                key={processedUrl}
+                url={processedUrl}
+                mediaRef={mediaRef}
+                className="max-h-[520px] w-full object-contain"
+                onReady={() => {
+                  setProcessedOk(true);
+                  setStreamError(false);
+                  onMediaLoad();
+                }}
+                onError={() => {
+                  setProcessedOk(false);
+                  setStreamError(true);
+                }}
+              />
+              {!processedOk ? (
+                <p className="m-0 max-w-md text-center text-xs text-muted">
+                  Backend `/stream` sent no frames for this completed job, and
+                  `/video/processed/{filename}` was not found. Please keep
+                  annotated frames available after completion, or return a
+                  working processed video path on the job.
+                </p>
+              ) : null}
+              <button
+                type="button"
+                className="rounded-xl border border-line px-3 py-1.5 text-xs font-semibold text-ink hover:bg-elevated"
+                onClick={() => {
+                  setStreamError(false);
+                  setStreamEmpty(false);
+                  setStreamUrl((prev) => bumpStreamCache(prev));
+                }}
+              >
+                Retry live stream
+              </button>
+            </div>
+          ) : showStream && (streamError || streamEmpty) ? (
             <div className="flex flex-col items-center gap-2 p-6 text-center">
               <p className="m-0 text-sm font-medium text-ink">Stream unavailable</p>
-              <p className="m-0 text-xs text-muted">
-                Job is {status}. Retry once processing advances.
+              <p className="m-0 max-w-md text-xs text-muted">
+                Job is <strong>{status}</strong>. The live `/stream` endpoint
+                returned no video frames
+                {status === "completed"
+                  ? " after processing finished"
+                  : ""}
+                .
               </p>
               <button
                 type="button"
                 className="rounded-xl border border-line px-3 py-1.5 text-xs font-semibold text-ink hover:bg-elevated"
                 onClick={() => {
                   setStreamError(false);
+                  setStreamEmpty(false);
                   setStreamUrl((prev) => bumpStreamCache(prev));
                 }}
               >
@@ -704,6 +845,13 @@ export function LiveFeedCard({ compact = false }) {
           activeId={jobId}
           onOpen={reopenJob}
           disabled={uploading}
+          loading={historyLoading}
+          error={historyError}
+          onRetry={() => {
+            setHistoryLoading(true);
+            setHistoryError(null);
+            refreshHistory();
+          }}
         />
       ) : history.length > 0 ? (
         <div className="rounded-2xl border border-line bg-panel px-3 py-2 shadow-sm">
@@ -747,17 +895,41 @@ function bumpStreamCache(prev) {
   }
 }
 
-function JobHistoryPanel({ history, activeId, onOpen, disabled }) {
+function JobHistoryPanel({
+  history,
+  activeId,
+  onOpen,
+  disabled,
+  loading,
+  error,
+  onRetry,
+}) {
   return (
     <aside className="rounded-2xl border border-line bg-panel p-3 shadow-sm">
       <h4 className="m-0 text-sm font-semibold text-ink">Job history</h4>
       <p className="m-0 mt-0.5 text-[0.7rem] text-muted">
-        Reopen a recent upload
+        From server · reopen any upload
       </p>
-      {history.length === 0 ? (
+      {loading && history.length === 0 ? (
+        <p className="mt-4 m-0 text-xs text-muted">Loading jobs…</p>
+      ) : error && history.length === 0 ? (
+        <div className="mt-4 flex flex-col gap-2">
+          <p className="m-0 text-xs text-danger">{error}</p>
+          <button
+            type="button"
+            onClick={onRetry}
+            className="cursor-pointer rounded-lg border border-line px-2 py-1.5 text-xs font-semibold text-ink hover:bg-elevated"
+          >
+            Retry
+          </button>
+        </div>
+      ) : history.length === 0 ? (
         <p className="mt-4 m-0 text-xs text-muted">No jobs yet.</p>
       ) : (
         <ul className="m-0 mt-3 flex list-none flex-col gap-2 p-0">
+          {error ? (
+            <li className="text-[0.65rem] text-danger">{error}</li>
+          ) : null}
           {history.map((item) => (
             <li key={item.job_id}>
               <button

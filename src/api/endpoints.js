@@ -68,12 +68,24 @@ export function getLiveVideo() {
   return apiFetch("/video/live");
 }
 
+/** List uploaded video jobs (server-side history). */
+export function getVideoJobs({ signal } = {}) {
+  return apiFetch("/video/jobs", { signal });
+}
+
 export function getJobStreamUrl(jobIdOrStreamPath) {
   if (!jobIdOrStreamPath) return null;
   if (String(jobIdOrStreamPath).includes("/")) {
     return resolveStreamUrl(jobIdOrStreamPath);
   }
   return resolveStreamUrl(`/video/jobs/${jobIdOrStreamPath}/stream`);
+}
+
+/** Completed annotated video file (when backend stores it). */
+export function getProcessedVideoUrl(filename) {
+  if (!filename) return null;
+  const safe = encodeURIComponent(String(filename).replace(/^\/+/, ""));
+  return resolveStreamUrl(`/video/processed/${safe}`);
 }
 
 export function getJobZones(jobId) {
