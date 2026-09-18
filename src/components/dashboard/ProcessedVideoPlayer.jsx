@@ -70,9 +70,9 @@ export function ProcessedVideoPlayer({
 
   if (loading) {
     return (
-      <div className="flex flex-col items-center justify-center gap-2 p-6 text-muted">
-        <div className="h-7 w-7 animate-spin rounded-full border-[3px] border-line border-t-accent" />
-        <p className="m-0 text-xs font-medium">Loading processed video…</p>
+      <div className="flex flex-col items-center justify-center gap-2 p-6 text-white/80">
+        <div className="h-7 w-7 animate-spin rounded-full border-[3px] border-white/25 border-t-accent" />
+        <p className="m-0 text-xs font-medium text-white">Loading processed video…</p>
       </div>
     );
   }

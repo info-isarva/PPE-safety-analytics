@@ -175,9 +175,9 @@ export function MjpegStreamPlayer({
   return (
     <>
       {!ready ? (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-6 text-center text-muted">
-          <div className="h-7 w-7 animate-spin rounded-full border-[3px] border-line border-t-accent" />
-          <p className="m-0 text-xs font-medium">Connecting to live stream…</p>
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-6 text-center text-white/80">
+          <div className="h-7 w-7 animate-spin rounded-full border-[3px] border-white/25 border-t-accent" />
+          <p className="m-0 text-xs font-medium text-white">Connecting to live stream…</p>
         </div>
       ) : null}
       <img

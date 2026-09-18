@@ -81,7 +81,21 @@ export function getJobStreamUrl(jobIdOrStreamPath) {
   return resolveStreamUrl(`/video/jobs/${jobIdOrStreamPath}/stream`);
 }
 
-/** Completed annotated video file (when backend stores it). */
+/** Absolute stream/file URL helper for optional processed_url from job JSON. */
+export function resolveProcessedVideoUrl(jobOrPath) {
+  if (!jobOrPath) return null;
+  if (typeof jobOrPath === "string") {
+    return resolveStreamUrl(jobOrPath);
+  }
+  const path =
+    jobOrPath.processed_url ||
+    jobOrPath.output_url ||
+    jobOrPath.video_url ||
+    null;
+  // Do not guess /video/processed/{filename} — API returns 404 for original names
+  return path ? resolveStreamUrl(path) : null;
+}
+
 export function getProcessedVideoUrl(filename) {
   if (!filename) return null;
   const safe = encodeURIComponent(String(filename).replace(/^\/+/, ""));

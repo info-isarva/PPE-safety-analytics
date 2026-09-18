@@ -3,9 +3,9 @@ import {
   getJobStreamUrl,
   getJobZones,
   getLiveVideo,
-  getProcessedVideoUrl,
   getVideoJob,
   getVideoJobs,
+  resolveProcessedVideoUrl,
   saveJobZones,
   stopVideoJob,
   uploadVideo,
@@ -118,7 +118,7 @@ export function LiveFeedCard({ compact = false }) {
     setJob(data);
     setLabel(name);
     setStreamUrl(getJobStreamUrl(data.stream_url || id));
-    setProcessedUrl(getProcessedVideoUrl(name));
+    setProcessedUrl(resolveProcessedVideoUrl(data));
     setProcessedOk(false);
     setStreamError(false);
     setStreamEmpty(false);
@@ -175,9 +175,7 @@ export function LiveFeedCard({ compact = false }) {
         if (cancelled) return;
         setJob(data);
         setLabel((prev) => data.filename || prev);
-        if (data.filename) {
-          setProcessedUrl(getProcessedVideoUrl(data.filename));
-        }
+        setProcessedUrl(resolveProcessedVideoUrl(data));
         if (data.stream_url) {
           const next = getJobStreamUrl(data.stream_url);
           setStreamUrl((prev) => (prev === next ? prev : next));
@@ -646,10 +644,10 @@ export function LiveFeedCard({ compact = false }) {
               onError={handleStreamError}
             />
           ) : showStream && (streamEmpty || streamError) && processedUrl ? (
-            <div className="flex w-full flex-col items-center gap-2 p-3">
+            <div className="flex w-full flex-col items-center gap-3 p-4">
               {status === "completed" ? (
-                <p className="m-0 text-center text-xs text-muted">
-                  Live frame stream ended after processing. Trying saved video…
+                <p className="m-0 text-center text-xs font-medium text-white/80">
+                  Live frame stream ended. Playing processed video…
                 </p>
               ) : null}
               <ProcessedVideoPlayer
@@ -664,20 +662,13 @@ export function LiveFeedCard({ compact = false }) {
                 }}
                 onError={() => {
                   setProcessedOk(false);
+                  setProcessedUrl(null);
                   setStreamError(true);
                 }}
               />
-              {!processedOk ? (
-                <p className="m-0 max-w-md text-center text-xs text-muted">
-                  Backend /stream sent no frames for this completed job, and
-                  /video/processed/&lt;filename&gt; was not found. Please keep
-                  annotated frames available after completion, or return a
-                  working processed video path on the job.
-                </p>
-              ) : null}
               <button
                 type="button"
-                className="rounded-xl border border-line px-3 py-1.5 text-xs font-semibold text-ink hover:bg-elevated"
+                className="rounded-xl border border-white/35 bg-white/10 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-white/20"
                 onClick={() => {
                   setStreamError(false);
                   setStreamEmpty(false);
@@ -688,19 +679,32 @@ export function LiveFeedCard({ compact = false }) {
               </button>
             </div>
           ) : showStream && (streamError || streamEmpty) ? (
-            <div className="flex flex-col items-center gap-2 p-6 text-center">
-              <p className="m-0 text-sm font-medium text-ink">Stream unavailable</p>
-              <p className="m-0 max-w-md text-xs text-muted">
-                Job is <strong>{status}</strong>. The live `/stream` endpoint
-                returned no video frames
+            <div className="flex max-w-lg flex-col items-center gap-3 rounded-2xl border border-white/15 bg-black/35 px-5 py-6 text-center backdrop-blur-sm">
+              <p className="m-0 text-base font-semibold text-white">
                 {status === "completed"
-                  ? " after processing finished"
-                  : ""}
-                .
+                  ? "Processing complete"
+                  : "Stream unavailable"}
+              </p>
+              <p className="m-0 text-sm leading-relaxed text-white/75">
+                {status === "completed" ? (
+                  <>
+                    This job finished, but the backend is not providing video
+                    frames on <span className="font-mono text-amber-300">/stream</span>
+                    , and there is no{" "}
+                    <span className="font-mono text-amber-300">processed_url</span>{" "}
+                    on the job. Ask backend to either replay annotated frames
+                    after completion or return a working processed video URL.
+                  </>
+                ) : (
+                  <>
+                    Job is <strong className="text-white">{status}</strong>. The
+                    live stream returned no frames.
+                  </>
+                )}
               </p>
               <button
                 type="button"
-                className="rounded-xl border border-line px-3 py-1.5 text-xs font-semibold text-ink hover:bg-elevated"
+                className="rounded-xl border border-white/35 bg-white/10 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-white/20"
                 onClick={() => {
                   setStreamError(false);
                   setStreamEmpty(false);
@@ -996,13 +1000,13 @@ function StatusChip({ status, tone, progress }) {
 function EmptyFeed({ uploading, onUpload }) {
   return (
     <div className="flex flex-col items-center justify-center gap-3 p-6 text-center">
-      <div className="grid h-16 w-16 place-items-center rounded-2xl bg-panel text-muted shadow-sm">
+      <div className="grid h-16 w-16 place-items-center rounded-2xl border border-white/15 bg-white/10 text-white/80 shadow-sm">
         <CameraIcon className="h-7 w-7" />
       </div>
-      <p className="m-0 text-sm font-medium text-ink">
+      <p className="m-0 text-sm font-semibold text-white">
         {uploading ? "Uploading video…" : "Drop an .mp4 here"}
       </p>
-      <p className="m-0 max-w-sm text-xs text-muted">
+      <p className="m-0 max-w-sm text-xs text-white/70">
         AI-annotated stream with detections and zones. Not incident screenshots.
       </p>
       <button
