@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
-import { getDashboardStats, getEvents } from "../api/endpoints";
+import { getDashboardStats, getEvents, getVideoJobs } from "../api/endpoints";
 import { SummaryMetricCard } from "../components/kpi/SummaryMetricCard";
 import { LiveFeedCard } from "../components/dashboard/LiveFeedCard";
 import { RecentIncidentsList } from "../components/dashboard/RecentIncidentsList";
+import { TodayOpsCards } from "../components/dashboard/TodayOpsCards";
 import { EventsTrendChart } from "../components/dashboard/EventsTrendChart";
 import { PpeDonutChart } from "../components/dashboard/PpeDonutChart";
 import { EventTypeBreakdown } from "../components/dashboard/EventTypeBreakdown";
 import { LoadingState } from "../components/common/LoadingState";
 import { ErrorState } from "../components/common/ErrorState";
 import { useLiveEventFeed } from "../hooks/useLiveEventFeed";
+import { normalizeJobsList } from "../components/dashboard/jobHistory";
 
 const REFRESH_MS = 30000;
 
@@ -45,31 +47,51 @@ function CheckIcon({ className }) {
 export default function Overview() {
   const [stats, setStats] = useState(null);
   const [events, setEvents] = useState([]);
+  const [jobs, setJobs] = useState([]);
+  const [jobsLoading, setJobsLoading] = useState(true);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
 
-  const load = useCallback(async (isRefresh = false) => {
-    if (isRefresh) setRefreshing(true);
-    setError(null);
+  const loadJobs = useCallback(async () => {
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 8000);
     try {
-      const [dashboard, allEvents] = await Promise.all([
-        getDashboardStats(),
-        getEvents(),
-      ]);
-      setStats(dashboard);
-      const list = Array.isArray(allEvents) ? allEvents : [];
-      const sorted = [...list].sort(
-        (a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0)
-      );
-      setEvents(sorted);
-    } catch (err) {
-      setError(err.message || "Failed to load dashboard data");
+      const data = await getVideoJobs({ signal: controller.signal });
+      setJobs(normalizeJobsList(data));
+    } catch {
+      /* keep previous jobs; /video/jobs can hang under load */
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      window.clearTimeout(timeoutId);
+      setJobsLoading(false);
     }
   }, []);
+
+  const load = useCallback(
+    async (isRefresh = false) => {
+      if (isRefresh) setRefreshing(true);
+      setError(null);
+      try {
+        const [dashboard, allEvents] = await Promise.all([
+          getDashboardStats(),
+          getEvents(),
+        ]);
+        setStats(dashboard);
+        const list = Array.isArray(allEvents) ? allEvents : [];
+        const sorted = [...list].sort(
+          (a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0)
+        );
+        setEvents(sorted);
+        await loadJobs();
+      } catch (err) {
+        setError(err.message || "Failed to load dashboard data");
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    },
+    [loadJobs]
+  );
 
   useEffect(() => {
     load(false);
@@ -166,6 +188,8 @@ export default function Overview() {
         />
       </section>
 
+      <TodayOpsCards events={events} jobs={jobs} jobsLoading={jobsLoading} />
+
       {/* PPE class cards from ppe_distribution */}
       <section className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         {Object.entries(distribution).map(([name, value]) => (
@@ -189,7 +213,7 @@ export default function Overview() {
         ))}
       </section>
 
-      <section className="grid grid-cols-1 gap-4 xl:grid-cols-[1.7fr_1fr]">
+      <section className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[1.7fr_1fr]">
         <LiveFeedCard />
         <RecentIncidentsList events={events} />
       </section>

@@ -25,10 +25,10 @@ function titleFor(event) {
 }
 
 export function RecentIncidentsList({ events }) {
-  const list = (events || []).slice(0, 5);
+  const list = (events || []).slice(0, 10);
 
   return (
-    <section className="flex h-full flex-col rounded-2xl border border-line bg-panel p-4 shadow-sm sm:p-5">
+    <section className="flex flex-col rounded-2xl border border-line bg-panel p-4 shadow-sm sm:p-5">
       <div className="mb-4 flex items-center justify-between gap-2">
         <h3 className="m-0 text-sm font-semibold text-ink">Recent Incidents</h3>
         <Link
@@ -42,7 +42,7 @@ export function RecentIncidentsList({ events }) {
       {list.length === 0 ? (
         <p className="m-0 text-sm text-muted">No incidents recorded yet.</p>
       ) : (
-        <ul className="m-0 flex flex-1 list-none flex-col gap-3 p-0">
+        <ul className="m-0 flex list-none flex-col gap-3 p-0">
           {list.map((event, index) => (
             <li key={event.id}>
               <Link
