@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { getHealth } from "../../api/endpoints";
+import { ViolationAlertListener } from "../alerts/ViolationAlertListener";
 import { ThemeToggle } from "../common/ThemeToggle";
 
 const NAV = [
@@ -133,6 +134,7 @@ export function AppShell() {
 
   return (
     <div className="relative min-h-dvh bg-base">
+      <ViolationAlertListener />
       <aside
         className={`fixed inset-y-0 left-0 z-40 flex h-dvh flex-col overflow-visible border-r border-sidebar/20 bg-sidebar text-sidebar-ink transition-all duration-300 ease-out w-56 ${sidebarWidth} ${
           mobileOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
