@@ -6,6 +6,7 @@ import { Pagination } from "../components/common/Pagination";
 import { LoadingState } from "../components/common/LoadingState";
 import { ErrorState } from "../components/common/ErrorState";
 import { EmptyState } from "../components/common/EmptyState";
+import { useLiveEventFeed } from "../hooks/useLiveEventFeed";
 
 function startOfDay(date) {
   const d = new Date(date);
@@ -126,6 +127,8 @@ export default function Incidents() {
   useEffect(() => {
     load(false);
   }, [load]);
+
+  useLiveEventFeed(setEvents);
 
   useEffect(() => {
     setPage(1);

@@ -1,46 +1,15 @@
 import { useEffect, useRef } from "react";
 import { resolveWsUrl } from "../api/ws";
 import { useToast } from "../components/common/ToastContext";
+import {
+  emitLiveSafetyEvent,
+  normalizeLiveEvent,
+} from "../events/liveEventsBus";
 
 const ALERT_TYPES = new Set(["PPE_VIOLATION", "RESTRICTED_ZONE", "ZONE_VIOLATION"]);
-const MIN_ALERT_GAP_MS = 2500;
 const RECONNECT_BASE_MS = 1500;
 const RECONNECT_MAX_MS = 30000;
-
-function extractEventType(payload) {
-  if (payload == null) return null;
-  if (typeof payload === "string") {
-    const trimmed = payload.trim();
-    if (ALERT_TYPES.has(trimmed)) return trimmed;
-    try {
-      return extractEventType(JSON.parse(trimmed));
-    } catch {
-      return null;
-    }
-  }
-  if (typeof payload !== "object") return null;
-
-  const candidates = [
-    payload.event_type,
-    payload.eventType,
-    payload.type,
-    payload.alert_type,
-    payload.alertType,
-    payload?.data?.event_type,
-    payload?.data?.eventType,
-    payload?.data?.type,
-    payload?.payload?.event_type,
-    payload?.payload?.eventType,
-    payload?.payload?.type,
-    payload?.event?.event_type,
-    payload?.event?.type,
-  ];
-
-  for (const value of candidates) {
-    if (typeof value === "string" && ALERT_TYPES.has(value)) return value;
-  }
-  return null;
-}
+const SEEN_CAP = 200;
 
 function labelForType(type) {
   if (type === "PPE_VIOLATION") return "PPE violation detected";
@@ -85,7 +54,7 @@ function showBrowserNotification(title, body) {
   try {
     new Notification(title, {
       body,
-      tag: "ppe-safety-alert",
+      tag: `ppe-safety-${Date.now()}`,
       renotify: true,
     });
   } catch {
@@ -104,15 +73,26 @@ async function ensureNotificationPermission() {
   }
 }
 
+function parseMessage(data) {
+  if (typeof data === "string") {
+    try {
+      return JSON.parse(data);
+    } catch {
+      return null;
+    }
+  }
+  return data && typeof data === "object" ? data : null;
+}
+
 /**
- * Subscribe to backend WebSocket alerts and surface them in the browser
- * (beep + Notification + toast). Backend play_alert_sound() only runs server-side.
+ * Connect to `wss://<api-host>/ws/events`.
+ * On PPE_VIOLATION / RESTRICTED_ZONE: beep, notification, toast, and publish for live lists.
  */
 export function useViolationAlerts() {
   const toast = useToast();
   const toastRef = useRef(toast);
   toastRef.current = toast;
-  const lastAlertAt = useRef(0);
+  const seenIds = useRef(new Set());
 
   useEffect(() => {
     let closed = false;
@@ -120,32 +100,47 @@ export function useViolationAlerts() {
     let reconnectTimer = null;
     let attempt = 0;
 
-    function handleAlert(type, raw) {
-      const now = Date.now();
-      if (now - lastAlertAt.current < MIN_ALERT_GAP_MS) return;
-      lastAlertAt.current = now;
+    function remember(id) {
+      const key = String(id);
+      if (seenIds.current.has(key)) return false;
+      seenIds.current.add(key);
+      if (seenIds.current.size > SEEN_CAP) {
+        const first = seenIds.current.values().next().value;
+        seenIds.current.delete(first);
+      }
+      return true;
+    }
+
+    function handleAlert(raw) {
+      const event = normalizeLiveEvent(raw);
+      if (!event) return;
+      if (!ALERT_TYPES.has(event.event_type)) return;
+      if (!remember(event.id)) return;
+
+      emitLiveSafetyEvent(event);
 
       const title =
-        type === "PPE_VIOLATION" ? "PPE Violation" : "Restricted Zone";
-      const message = labelForType(type);
-      const detail =
-        raw?.message ||
-        raw?.detail ||
-        raw?.description ||
-        raw?.payload?.message ||
-        "";
+        event.event_type === "PPE_VIOLATION"
+          ? "PPE Violation"
+          : "Restricted Zone";
+      const message = labelForType(event.event_type);
+      const detail = event.message || "";
 
       playAlertBeep();
       showBrowserNotification(
         title,
         detail ? `${message}: ${detail}` : message
       );
-      toastRef.current?.error?.(detail ? `${message} — ${detail}` : message);
+      toastRef.current?.error?.(
+        detail
+          ? `${message} — ${detail} (#${event.id})`
+          : `${message} (#${event.id})`
+      );
     }
 
     function connect() {
       if (closed) return;
-      const url = resolveWsUrl("/ws");
+      const url = resolveWsUrl("/ws/events");
       try {
         ws = new WebSocket(url);
       } catch {
@@ -158,18 +153,9 @@ export function useViolationAlerts() {
         ensureNotificationPermission();
       };
 
-      ws.onmessage = (event) => {
-        let parsed = event.data;
-        try {
-          parsed =
-            typeof event.data === "string"
-              ? JSON.parse(event.data)
-              : event.data;
-        } catch {
-          parsed = event.data;
-        }
-        const type = extractEventType(parsed);
-        if (type) handleAlert(type, typeof parsed === "object" ? parsed : {});
+      ws.onmessage = (msg) => {
+        const parsed = parseMessage(msg.data);
+        if (parsed) handleAlert(parsed);
       };
 
       ws.onerror = () => {
@@ -195,7 +181,6 @@ export function useViolationAlerts() {
       }, delay);
     }
 
-    // Unlock AudioContext after first user gesture (browser autoplay policy).
     const unlock = () => {
       playAlertBeep._ctx =
         playAlertBeep._ctx ||
@@ -219,7 +204,11 @@ export function useViolationAlerts() {
       if (reconnectTimer) window.clearTimeout(reconnectTimer);
       if (ws) {
         ws.onclose = null;
-        ws.close();
+        try {
+          ws.close();
+        } catch {
+          /* ignore */
+        }
       }
     };
   }, []);

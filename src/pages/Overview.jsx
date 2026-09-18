@@ -8,6 +8,7 @@ import { PpeDonutChart } from "../components/dashboard/PpeDonutChart";
 import { EventTypeBreakdown } from "../components/dashboard/EventTypeBreakdown";
 import { LoadingState } from "../components/common/LoadingState";
 import { ErrorState } from "../components/common/ErrorState";
+import { useLiveEventFeed } from "../hooks/useLiveEventFeed";
 
 const REFRESH_MS = 30000;
 
@@ -75,6 +76,14 @@ export default function Overview() {
     const id = setInterval(() => load(false), REFRESH_MS);
     return () => clearInterval(id);
   }, [load]);
+
+  useLiveEventFeed(setEvents, {
+    onEvent: () => {
+      getDashboardStats()
+        .then((dashboard) => setStats(dashboard))
+        .catch(() => {});
+    },
+  });
 
   if (loading && !stats) {
     return <LoadingState label="Loading dashboard…" />;

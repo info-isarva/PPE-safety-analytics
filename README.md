@@ -30,6 +30,15 @@ Or local:
 VITE_API_BASE_URL=http://127.0.0.1:8000
 ```
 
+Optional WebSocket alert URL (defaults to `wss://<api-host>/ws/events`):
+
+```env
+# VITE_WS_PATH=/ws/events
+# VITE_WS_URL=wss://tapeless-juvenile-drainer.ngrok-free.dev/ws/events
+```
+
+Live events: dashboard connects to `/ws/events` for `PPE_VIOLATION` / `RESTRICTED_ZONE` — updates lists live and plays a browser beep (no page refresh).
+
 ## Run
 
 ```bash
@@ -45,5 +54,7 @@ Open [http://localhost:5173](http://localhost:5173).
 | `/` | Overview — KPIs, PPE chart, recent incidents |
 | `/incidents` | Filterable incident list |
 | `/incidents/:id` | Event detail + screenshot |
-| `/live` | Placeholder (Phase 11) |
+| `/live` | Live Monitor — upload, MJPEG stream, zones |
 | `/reports` | Placeholder (Phase 14) |
+
+**Browser alerts:** Connects to `/ws/events` for `PPE_VIOLATION` / `RESTRICTED_ZONE` — live list updates + beep + notification + toast.

@@ -1,7 +1,7 @@
 import { API_BASE_URL } from "./client";
 
-/** Build WebSocket URL from API base (http→ws, https→wss). */
-export function resolveWsUrl(path = "/ws") {
+/** Build WebSocket URL from API base (http→ws, https→wss). Default: /ws/events */
+export function resolveWsUrl(path = "/ws/events") {
   const override = import.meta.env.VITE_WS_URL;
   if (override) return String(override).replace(/\/$/, "");
 
