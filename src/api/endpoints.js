@@ -119,4 +119,23 @@ export function stopVideoJob(jobId) {
   });
 }
 
+/* ---------- Webcam live source ---------- */
+
+/** Start laptop/USB webcam processing. Optional camera_index (default 0). */
+export function startWebcam(cameraIndex = 0) {
+  const q = new URLSearchParams({
+    camera_index: String(cameraIndex ?? 0),
+  });
+  return apiFetch(`/video/webcam/start?${q}`, {
+    method: "POST",
+  });
+}
+
+/** Stop a webcam job (preferred over generic /video/jobs/.../stop). */
+export function stopWebcam(jobId) {
+  return apiFetch(`/video/webcam/${jobId}/stop`, {
+    method: "POST",
+  });
+}
+
 export { API_BASE_URL };

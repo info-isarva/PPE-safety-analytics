@@ -7,7 +7,9 @@ import {
   getVideoJobs,
   resolveProcessedVideoUrl,
   saveJobZones,
+  startWebcam,
   stopVideoJob,
+  stopWebcam,
   uploadVideo,
 } from "../../api/endpoints";
 import { useToast } from "../common/ToastContext";
@@ -32,7 +34,9 @@ const HISTORY_POLL_MS = 8000;
 const ACCEPT_VIDEO = ".mp4,video/mp4";
 
 function statusTone(status) {
-  if (status === "processing" || status === "queued") return "accent";
+  if (status === "processing" || status === "queued" || status === "stopping") {
+    return "accent";
+  }
   if (status === "completed") return "ok";
   if (status === "failed" || status === "cancelled") return "danger";
   return "muted";
@@ -49,6 +53,7 @@ export function LiveFeedCard({ compact = false }) {
   const [streamUrl, setStreamUrl] = useState(null);
   const [label, setLabel] = useState(null);
   const [uploading, setUploading] = useState(false);
+  const [startingWebcam, setStartingWebcam] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [error, setError] = useState(null);
   const [streamError, setStreamError] = useState(false);
@@ -73,9 +78,15 @@ export function LiveFeedCard({ compact = false }) {
 
   const status = job?.status || (streamUrl ? "processing" : "idle");
   const progress = Number(job?.progress ?? 0);
+  const sourceType = job?.source_type || null;
+  const isWebcam = sourceType === "webcam";
   const tone = statusTone(status);
   const canStop =
-    Boolean(jobId) && (status === "queued" || status === "processing");
+    Boolean(jobId) &&
+    (status === "queued" ||
+      status === "processing" ||
+      status === "stopping");
+  const busy = uploading || startingWebcam;
 
   const refreshHistory = useCallback(async () => {
     const controller = new AbortController();
@@ -349,9 +360,32 @@ export function LiveFeedCard({ compact = false }) {
   function onDrop(event) {
     event.preventDefault();
     setDragOver(false);
-    if (drawing || uploading) return;
+    if (drawing || uploading || startingWebcam) return;
     const file = event.dataTransfer.files?.[0];
     processFile(file);
+  }
+
+  async function handleStartWebcam() {
+    if (busy || drawing) return;
+    setStartingWebcam(true);
+    setError(null);
+    setStreamError(false);
+    setDraftPoints([]);
+    setSavedPoints([]);
+    setDrawing(false);
+
+    try {
+      const result = await startWebcam(0);
+      activateJob(result, result.filename || "Webcam 0");
+      toast.success(result.message || "Webcam started");
+      refreshHistory();
+    } catch (err) {
+      const msg = err.message || "Could not start webcam";
+      setError(msg);
+      toast.error(msg);
+    } finally {
+      setStartingWebcam(false);
+    }
   }
 
   function onMediaLoad() {
@@ -407,7 +441,7 @@ export function LiveFeedCard({ compact = false }) {
 
   function startDrawing() {
     if (!streamUrl || !jobId) {
-      toast.info("Upload a video before drawing a zone.");
+      toast.info("Start a webcam or upload a video before drawing a zone.");
       return;
     }
     setDrawing(true);
@@ -505,12 +539,15 @@ export function LiveFeedCard({ compact = false }) {
     if (!jobId || !canStop) return;
     setStopping(true);
     try {
-      const result = await stopVideoJob(jobId);
-      setJob((prev) => ({ ...prev, ...result, status: result.status || "cancelled" }));
+      const result = isWebcam
+        ? await stopWebcam(jobId)
+        : await stopVideoJob(jobId);
+      const nextStatus = result.status || (isWebcam ? "stopping" : "cancelled");
+      setJob((prev) => ({ ...prev, ...result, status: nextStatus }));
       setHistory((prev) =>
-        patchJobInList(prev, jobId, { status: result.status || "cancelled" })
+        patchJobInList(prev, jobId, { status: nextStatus })
       );
-      toast.info("Processing stopped.");
+      toast.info(isWebcam ? "Webcam stop requested." : "Processing stopped.");
       refreshHistory();
     } catch (err) {
       toast.error(err.message || "Could not stop job");
@@ -520,7 +557,7 @@ export function LiveFeedCard({ compact = false }) {
   }
 
   async function reopenJob(entry) {
-    if (!entry?.job_id || uploading) return;
+    if (!entry?.job_id || busy) return;
     try {
       const data = await getVideoJob(entry.job_id);
       activateJob(data, entry.filename);
@@ -546,12 +583,19 @@ export function LiveFeedCard({ compact = false }) {
             <h3 className="m-0 text-sm font-semibold text-ink">Live Feed</h3>
             <p className="m-0 text-xs text-muted">
               {label
-                ? `AI-annotated stream · ${label}`
-                : "Drop an .mp4 or click Upload to start"}
+                ? `AI-annotated stream · ${label}${
+                    isWebcam ? " · webcam" : ""
+                  }`
+                : "Upload .mp4 or start webcam for live AI monitoring"}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <StatusChip status={status} tone={tone} progress={progress} />
+            <StatusChip
+              status={status}
+              tone={tone}
+              progress={progress}
+              isWebcam={isWebcam}
+            />
             <input
               ref={fileInputRef}
               type="file"
@@ -561,7 +605,16 @@ export function LiveFeedCard({ compact = false }) {
             />
             <button
               type="button"
-              disabled={uploading}
+              disabled={busy}
+              onClick={handleStartWebcam}
+              className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-line bg-elevated px-3 py-1.5 text-xs font-semibold text-ink transition-colors hover:border-accent/40 hover:bg-accent-soft disabled:cursor-wait disabled:opacity-70"
+            >
+              <CameraIcon className="h-3.5 w-3.5 text-accent" />
+              {startingWebcam ? "Starting…" : "Start Webcam"}
+            </button>
+            <button
+              type="button"
+              disabled={busy}
               onClick={() => fileInputRef.current?.click()}
               className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-line bg-elevated px-3 py-1.5 text-xs font-semibold text-ink transition-colors hover:border-accent/40 hover:bg-accent-soft disabled:cursor-wait disabled:opacity-70"
             >
@@ -581,7 +634,7 @@ export function LiveFeedCard({ compact = false }) {
           </div>
         </div>
 
-        {(status === "queued" || status === "processing") && (
+        {(status === "queued" || status === "processing") && !isWebcam && (
           <div className="border-b border-line px-4 py-2">
             <div className="flex items-center justify-between text-[0.7rem] font-semibold text-muted">
               <span>{status === "queued" ? "Queued" : "Processing"}</span>
@@ -595,6 +648,13 @@ export function LiveFeedCard({ compact = false }) {
             </div>
           </div>
         )}
+        {(status === "queued" || status === "processing") && isWebcam ? (
+          <div className="border-b border-line px-4 py-2">
+            <p className="m-0 text-[0.7rem] font-semibold text-muted">
+              Webcam live · progress stays 0 (no fixed frame count)
+            </p>
+          </div>
+        ) : null}
 
         {error ? (
           <p className="m-0 border-b border-line bg-danger-soft px-4 py-2 text-xs text-danger">
@@ -717,7 +777,9 @@ export function LiveFeedCard({ compact = false }) {
           ) : (
             <EmptyFeed
               uploading={uploading}
+              startingWebcam={startingWebcam}
               onUpload={() => fileInputRef.current?.click()}
+              onStartWebcam={handleStartWebcam}
             />
           )}
 
@@ -837,8 +899,9 @@ export function LiveFeedCard({ compact = false }) {
             ) : null}
           </div>
           <p className="m-0 text-[0.7rem] text-muted">
-            Max upload {formatBytes(MAX_UPLOAD_BYTES)}. Screenshots stay on
-            Incidents as evidence only.
+            Webcam uses the server camera · Max upload{" "}
+            {formatBytes(MAX_UPLOAD_BYTES)}. Screenshots stay on Incidents as
+            evidence only.
           </p>
         </div>
       </section>
@@ -848,7 +911,7 @@ export function LiveFeedCard({ compact = false }) {
           history={history}
           activeId={jobId}
           onOpen={reopenJob}
-          disabled={uploading}
+          disabled={busy}
           loading={historyLoading}
           error={historyError}
           onRetry={() => {
@@ -867,7 +930,7 @@ export function LiveFeedCard({ compact = false }) {
               <button
                 key={item.job_id}
                 type="button"
-                disabled={uploading}
+                disabled={busy}
                 onClick={() => reopenJob(item)}
                 className={`shrink-0 cursor-pointer rounded-xl border px-2.5 py-1.5 text-left text-xs transition-colors ${
                   item.job_id === jobId
@@ -878,7 +941,10 @@ export function LiveFeedCard({ compact = false }) {
                 <span className="block max-w-[9rem] truncate font-semibold text-ink">
                   {item.filename}
                 </span>
-                <span className="text-dim">{item.status}</span>
+                <span className="text-dim">
+                  {item.source_type === "webcam" ? "webcam · " : ""}
+                  {item.status}
+                </span>
               </button>
             ))}
           </div>
@@ -951,7 +1017,10 @@ function JobHistoryPanel({
                 </span>
                 <span className="mt-0.5 flex items-center justify-between gap-2 text-[0.65rem] text-muted">
                   <span className="truncate font-mono">{item.job_id}</span>
-                  <span>{item.status}</span>
+                  <span>
+                    {item.source_type === "webcam" ? "webcam · " : ""}
+                    {item.status}
+                  </span>
                 </span>
               </button>
             </li>
@@ -962,19 +1031,25 @@ function JobHistoryPanel({
   );
 }
 
-function StatusChip({ status, tone, progress }) {
+function StatusChip({ status, tone, progress, isWebcam = false }) {
   const label =
     status === "processing"
-      ? `Live · ${Math.round(progress || 0)}%`
+      ? isWebcam
+        ? "Live · Webcam"
+        : `Live · ${Math.round(progress || 0)}%`
       : status === "queued"
-        ? "Queued"
-        : status === "completed"
-          ? "Completed"
-          : status === "failed"
-            ? "Failed"
-            : status === "cancelled"
-              ? "Cancelled"
-              : "Idle";
+        ? isWebcam
+          ? "Webcam queued"
+          : "Queued"
+        : status === "stopping"
+          ? "Stopping…"
+          : status === "completed"
+            ? "Completed"
+            : status === "failed"
+              ? "Failed"
+              : status === "cancelled"
+                ? "Cancelled"
+                : "Idle";
 
   const classes =
     tone === "accent"
@@ -989,7 +1064,9 @@ function StatusChip({ status, tone, progress }) {
     <span
       className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[0.7rem] font-semibold ${classes}`}
     >
-      {(status === "processing" || status === "queued") && (
+      {(status === "processing" ||
+        status === "queued" ||
+        status === "stopping") && (
         <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-current" />
       )}
       {label}
@@ -997,26 +1074,42 @@ function StatusChip({ status, tone, progress }) {
   );
 }
 
-function EmptyFeed({ uploading, onUpload }) {
+function EmptyFeed({ uploading, startingWebcam, onUpload, onStartWebcam }) {
   return (
     <div className="flex flex-col items-center justify-center gap-3 p-6 text-center">
       <div className="grid h-16 w-16 place-items-center rounded-2xl border border-white/15 bg-white/10 text-white/80 shadow-sm">
         <CameraIcon className="h-7 w-7" />
       </div>
       <p className="m-0 text-sm font-semibold text-white">
-        {uploading ? "Uploading video…" : "Drop an .mp4 here"}
+        {startingWebcam
+          ? "Starting webcam…"
+          : uploading
+            ? "Uploading video…"
+            : "Start webcam or drop an .mp4"}
       </p>
       <p className="m-0 max-w-sm text-xs text-white/70">
         AI-annotated stream with detections and zones. Not incident screenshots.
       </p>
-      <button
-        type="button"
-        onClick={onUpload}
-        className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-accent px-3 py-2 text-xs font-semibold text-white hover:bg-accent-hover"
-      >
-        <UploadIcon className="h-3.5 w-3.5" />
-        Upload Video
-      </button>
+      <div className="flex flex-wrap items-center justify-center gap-2">
+        <button
+          type="button"
+          onClick={onStartWebcam}
+          disabled={uploading || startingWebcam}
+          className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-white/30 bg-white/10 px-3 py-2 text-xs font-semibold text-white hover:bg-white/20 disabled:opacity-60"
+        >
+          <CameraIcon className="h-3.5 w-3.5" />
+          {startingWebcam ? "Starting…" : "Start Webcam"}
+        </button>
+        <button
+          type="button"
+          onClick={onUpload}
+          disabled={uploading || startingWebcam}
+          className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-accent px-3 py-2 text-xs font-semibold text-white hover:bg-accent-hover disabled:opacity-60"
+        >
+          <UploadIcon className="h-3.5 w-3.5" />
+          Upload Video
+        </button>
+      </div>
     </div>
   );
 }
