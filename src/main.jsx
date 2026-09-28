@@ -4,12 +4,15 @@ import "./index.css";
 import App from "./App.jsx";
 import { ThemeProvider } from "./theme/ThemeContext.jsx";
 import { ToastProvider } from "./components/common/ToastContext.jsx";
+import { BrandLogoProvider } from "./settings/BrandLogoContext.jsx";
 
 createRoot(document.getElementById("root")).render(
   <StrictMode>
     <ThemeProvider>
       <ToastProvider>
-        <App />
+        <BrandLogoProvider>
+          <App />
+        </BrandLogoProvider>
       </ToastProvider>
     </ThemeProvider>
   </StrictMode>

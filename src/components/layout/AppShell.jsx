@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { getHealth } from "../../api/endpoints";
+import { useBrandLogos } from "../../settings/BrandLogoContext";
 import { ViolationAlertListener } from "../alerts/ViolationAlertListener";
 import { ThemeToggle } from "../common/ThemeToggle";
 
@@ -9,6 +10,7 @@ const NAV = [
   { to: "/incidents", label: "Incidents", icon: IncidentsIcon },
   { to: "/live", label: "Live", icon: LiveIcon },
   { to: "/reports", label: "Reports", icon: ReportsIcon },
+  { to: "/settings", label: "Settings", icon: SettingsIcon },
 ];
 
 const PAGE_META = {
@@ -16,6 +18,7 @@ const PAGE_META = {
   "/incidents": { title: "Incidents", subtitle: "Safety event feed" },
   "/live": { title: "Live Monitor", subtitle: "Upload · stream · zones" },
   "/reports": { title: "Reports", subtitle: "Coming in Phase 14" },
+  "/settings": { title: "Settings", subtitle: "Brand · preferences" },
 };
 
 const SIDEBAR_KEY = "ppe-sidebar-collapsed";
@@ -59,6 +62,18 @@ function ReportsIcon({ className }) {
   );
 }
 
+function SettingsIcon({ className }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <circle cx="12" cy="12" r="3" />
+      <path
+        d="M12 3.5v2.2M12 18.3v2.2M4.9 6.5l1.6 1.6M17.5 15.9l1.6 1.6M3.5 12h2.2M18.3 12h2.2M4.9 17.5l1.6-1.6M17.5 8.1l1.6-1.6"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
 function PanelLeftIcon({ className }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
@@ -69,6 +84,7 @@ function PanelLeftIcon({ className }) {
 }
 
 export function AppShell() {
+  const { fullLogoSrc, markLogoSrc } = useBrandLogos();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(() => {
     try {
@@ -142,24 +158,23 @@ export function AppShell() {
         aria-label="Main navigation"
       >
         <div
-          className={`flex h-14 items-center border-b border-white/10 ${
-            collapsed ? "justify-center px-2" : "gap-2.5 px-3"
+          className={`flex shrink-0 items-center justify-center border-b border-white/10 ${
+            collapsed ? "h-16 px-2" : "h-16 px-3 py-2"
           }`}
         >
-          <span
-            className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-accent text-[0.7rem] font-black text-white"
-            aria-hidden="true"
-          >
-            PPE
-          </span>
-          {!collapsed ? (
-            <div className="min-w-0 leading-tight">
-              <p className="m-0 truncate text-sm font-bold text-white">PPE Safety</p>
-              <p className="m-0 text-[0.65rem] uppercase tracking-[0.12em] text-sidebar-muted">
-                Analytics
-              </p>
-            </div>
-          ) : null}
+          {collapsed ? (
+            <img
+              src={markLogoSrc}
+              alt="isarva Nethra"
+              className="h-10 w-10 object-contain drop-shadow-sm"
+            />
+          ) : (
+            <img
+              src={fullLogoSrc}
+              alt="isarva Nethra"
+              className="mx-auto h-11 w-auto max-w-[90%] object-contain drop-shadow-sm"
+            />
+          )}
         </div>
 
         <nav className={`flex flex-1 flex-col gap-0.5 p-2 ${collapsed ? "items-center" : ""}`}>
