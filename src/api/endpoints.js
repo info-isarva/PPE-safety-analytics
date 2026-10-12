@@ -210,11 +210,22 @@ export async function stopLiveSource(jobId, sourceType) {
 
 /* ---------- Dataset & model management ---------- */
 
-/** Upload a YOLO dataset ZIP (`multipart/form-data`, field: file). */
-export function uploadDataset(file) {
+/**
+ * Upload a YOLO dataset ZIP.
+ * Backend expects: multipart file + required query param `name`.
+ * POST /datasets/upload?name=Construction%20Site
+ */
+export function uploadDataset(file, name) {
   const form = new FormData();
   form.append("file", file);
-  return apiFetch("/datasets/upload", {
+  const datasetName =
+    String(name || "").trim() ||
+    String(file?.name || "dataset")
+      .replace(/\.zip$/i, "")
+      .trim() ||
+    "dataset";
+  const q = new URLSearchParams({ name: datasetName });
+  return apiFetch(`/datasets/upload?${q}`, {
     method: "POST",
     body: form,
   });

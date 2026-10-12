@@ -4,6 +4,36 @@ const API_BASE_URL = (
 
 export { API_BASE_URL };
 
+/** Turn FastAPI / API error payloads into a readable string. */
+export function formatApiErrorDetail(detail, fallback = "") {
+  if (detail == null || detail === "") return fallback;
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    const parts = detail.map((item) => {
+      if (typeof item === "string") return item;
+      if (item && typeof item === "object") {
+        const loc = Array.isArray(item.loc)
+          ? item.loc.filter((p) => p !== "body" && p !== "query").join(".")
+          : "";
+        const msg = item.msg || item.message || JSON.stringify(item);
+        return loc ? `${loc}: ${msg}` : msg;
+      }
+      return String(item);
+    });
+    return parts.filter(Boolean).join("; ") || fallback;
+  }
+  if (typeof detail === "object") {
+    if (typeof detail.message === "string") return detail.message;
+    if (typeof detail.msg === "string") return detail.msg;
+    try {
+      return JSON.stringify(detail);
+    } catch {
+      return fallback;
+    }
+  }
+  return String(detail);
+}
+
 export async function apiFetch(path, options = {}) {
   const url = `${API_BASE_URL}${path.startsWith("/") ? path : `/${path}`}`;
   const { json, headers: customHeaders, body, ...rest } = options;
@@ -36,7 +66,10 @@ export async function apiFetch(path, options = {}) {
     let detail = "";
     try {
       const errBody = await response.json();
-      detail = errBody?.detail || errBody?.message || "";
+      detail = formatApiErrorDetail(
+        errBody?.detail ?? errBody?.message ?? errBody,
+        ""
+      );
     } catch {
       /* ignore */
     }

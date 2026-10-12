@@ -97,6 +97,7 @@ export default function Models() {
     () => readRecentDatasets()[0]?.dataset_id || ""
   );
   const [uploading, setUploading] = useState(false);
+  const [datasetName, setDatasetName] = useState("");
   const [trainForm, setTrainForm] = useState(DEFAULT_TRAIN);
   const [startingTrain, setStartingTrain] = useState(false);
 
@@ -204,27 +205,46 @@ export default function Models() {
     };
   }, [jobId, pollTraining]);
 
-  async function handleUpload(file) {
+  function nameFromZip(filename) {
+    return String(filename || "")
+      .replace(/\.zip$/i, "")
+      .replace(/\.v\d+i\.[^.]+$/i, "")
+      .replace(/[_-]+/g, " ")
+      .trim();
+  }
+
+  async function handleUpload(file, nameOverride) {
     if (!file) return;
     if (!/\.zip$/i.test(file.name)) {
       toast.error("Please upload a .zip dataset file");
       return;
     }
+    const name =
+      String(nameOverride || datasetName || "").trim() ||
+      nameFromZip(file.name) ||
+      "dataset";
+    setDatasetName(name);
     setUploading(true);
     try {
-      const result = await uploadDataset(file);
-      rememberDataset(result);
+      const result = await uploadDataset(file, name);
+      const saved = {
+        dataset_id: result.dataset_id,
+        name: result.name || name,
+        status: result.status || "validated",
+        uploaded_at: new Date().toISOString(),
+      };
+      rememberDataset(saved);
       const next = readRecentDatasets();
       setDatasets(next);
-      setSelectedId(result.dataset_id);
+      setSelectedId(saved.dataset_id);
       setTrainForm((f) => ({
         ...f,
-        model_name: `${result.name || "Custom Model"} V1`,
+        model_name: `${saved.name || "Custom Model"} V1`,
       }));
       toast.success(
-        result.status === "validated"
-          ? `Dataset validated · ${result.dataset_id}`
-          : `Dataset uploaded · ${result.dataset_id}`
+        saved.status === "validated"
+          ? `Dataset validated · ${saved.dataset_id}`
+          : `Dataset uploaded · ${saved.dataset_id}`
       );
     } catch (err) {
       toast.error(err.message || "Dataset upload failed");
@@ -396,13 +416,34 @@ export default function Models() {
               </div>
             </div>
 
-            <div className="mt-5 rounded-2xl border border-dashed border-line bg-elevated/50 px-4 py-8 text-center">
+            <label className="mt-5 flex flex-col text-xs font-semibold text-muted">
+              Dataset name
+              <span className="font-normal text-dim">
+                {" "}
+                (required by API as query param <code>name</code>)
+              </span>
+              <input
+                value={datasetName}
+                onChange={(e) => setDatasetName(e.target.value)}
+                placeholder="Construction Site"
+                className={fieldClass}
+              />
+            </label>
+
+            <div className="mt-4 rounded-2xl border border-dashed border-line bg-elevated/50 px-4 py-8 text-center">
               <input
                 ref={fileRef}
                 type="file"
                 accept=".zip,application/zip"
                 className="hidden"
-                onChange={(e) => handleUpload(e.target.files?.[0])}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  const inferred =
+                    datasetName.trim() || nameFromZip(file.name);
+                  if (!datasetName.trim()) setDatasetName(inferred);
+                  handleUpload(file, inferred);
+                }}
               />
               <p className="m-0 text-sm font-semibold text-ink">
                 Drop a dataset ZIP or browse
