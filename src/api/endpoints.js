@@ -323,15 +323,24 @@ export async function getActiveModel() {
   }
 }
 
-/** Rename a trained model. */
+/**
+ * Rename a trained model.
+ * Backend expects name as a query param (not JSON body):
+ * PUT /models/{model_id}?name=Construction%20Site%20V1
+ */
 export function renameModel(modelId, name) {
   if (modelId == null || modelId === "") {
     return Promise.reject(new Error("Missing model id"));
   }
-  return apiFetch(`/models/${encodeURIComponent(String(modelId))}`, {
-    method: "PUT",
-    json: { name },
-  }).then(normalizeModel);
+  const nextName = String(name || "").trim();
+  if (!nextName) {
+    return Promise.reject(new Error("Name is required"));
+  }
+  const q = new URLSearchParams({ name: nextName });
+  return apiFetch(
+    `/models/${encodeURIComponent(String(modelId))}?${q}`,
+    { method: "PUT" }
+  ).then(normalizeModel);
 }
 
 /** Activate a trained model for the detection pipeline. */
