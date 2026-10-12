@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
-import { getDashboardStats, getEvents, getVideoJobs } from "../api/endpoints";
+import { Link } from "react-router-dom";
+import {
+  getActiveModel,
+  getDashboardStats,
+  getEvents,
+  getVideoJobs,
+} from "../api/endpoints";
 import { SummaryMetricCard } from "../components/kpi/SummaryMetricCard";
 import { LiveFeedCard } from "../components/dashboard/LiveFeedCard";
 import { RecentIncidentsList } from "../components/dashboard/RecentIncidentsList";
@@ -49,6 +55,7 @@ export default function Overview() {
   const [events, setEvents] = useState([]);
   const [jobs, setJobs] = useState([]);
   const [jobsLoading, setJobsLoading] = useState(true);
+  const [activeModel, setActiveModel] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
@@ -72,11 +79,13 @@ export default function Overview() {
       if (isRefresh) setRefreshing(true);
       setError(null);
       try {
-        const [dashboard, allEvents] = await Promise.all([
+        const [dashboard, allEvents, model] = await Promise.all([
           getDashboardStats(),
           getEvents(),
+          getActiveModel().catch(() => null),
         ]);
         setStats(dashboard);
+        setActiveModel(model);
         const list = Array.isArray(allEvents) ? allEvents : [];
         const sorted = [...list].sort(
           (a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0)
@@ -159,6 +168,30 @@ export default function Overview() {
           Last refresh failed: {error}
         </p>
       ) : null}
+
+      <section className="rounded-2xl border border-line bg-panel px-4 py-3 shadow-sm sm:px-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="m-0 text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-muted">
+              Active model
+            </p>
+            <p className="m-0 mt-1 text-base font-bold text-ink">
+              {activeModel?.name || "No active model"}
+            </p>
+            <p className="m-0 mt-0.5 text-xs text-muted">
+              {activeModel
+                ? `Status: Active · ID ${activeModel.id}`
+                : "Upload a dataset and activate a trained model"}
+            </p>
+          </div>
+          <Link
+            to="/models"
+            className="inline-flex items-center rounded-xl border border-accent bg-accent-soft px-3 py-2 text-xs font-semibold text-accent hover:bg-accent hover:text-white"
+          >
+            Manage models
+          </Link>
+        </div>
+      </section>
 
       {/* All fields from GET /stats/dashboard */}
       <section className="stagger-children grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">

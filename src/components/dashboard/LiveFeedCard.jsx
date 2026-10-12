@@ -7,12 +7,14 @@ import {
   getVideoJobs,
   resolveProcessedVideoUrl,
   saveJobZones,
+  startSavedCamera,
   startWebcam,
-  stopVideoJob,
-  stopWebcam,
+  stopLiveSource,
   uploadVideo,
 } from "../../api/endpoints";
+import { useCameraSources } from "../../cameras/CameraSourcesContext";
 import { useToast } from "../common/ToastContext";
+import { Link } from "react-router-dom";
 import { MjpegStreamPlayer } from "./MjpegStreamPlayer";
 import { ProcessedVideoPlayer } from "./ProcessedVideoPlayer";
 import {
@@ -44,6 +46,7 @@ function statusTone(status) {
 
 export function LiveFeedCard({ compact = false }) {
   const toast = useToast();
+  const { enabledCameras } = useCameraSources();
   const fileInputRef = useRef(null);
   const mediaRef = useRef(null);
   const stageRef = useRef(null);
@@ -54,6 +57,8 @@ export function LiveFeedCard({ compact = false }) {
   const [label, setLabel] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [startingWebcam, setStartingWebcam] = useState(false);
+  const [startingSaved, setStartingSaved] = useState(false);
+  const [selectedCameraId, setSelectedCameraId] = useState("");
   const [stopping, setStopping] = useState(false);
   const [error, setError] = useState(null);
   const [streamError, setStreamError] = useState(false);
@@ -80,13 +85,15 @@ export function LiveFeedCard({ compact = false }) {
   const progress = Number(job?.progress ?? 0);
   const sourceType = job?.source_type || null;
   const isWebcam = sourceType === "webcam";
+  const isRtsp = sourceType === "rtsp";
+  const isHttp = sourceType === "http";
   const tone = statusTone(status);
   const canStop =
     Boolean(jobId) &&
     (status === "queued" ||
       status === "processing" ||
       status === "stopping");
-  const busy = uploading || startingWebcam;
+  const busy = uploading || startingWebcam || startingSaved;
 
   const refreshHistory = useCallback(async () => {
     const controller = new AbortController();
@@ -388,6 +395,39 @@ export function LiveFeedCard({ compact = false }) {
     }
   }
 
+  async function handleStartSavedCamera() {
+    if (busy || drawing) return;
+    const camera = enabledCameras.find((c) => c.id === selectedCameraId);
+    if (!camera) {
+      toast.info("Select a saved camera first (or add one under Cameras).");
+      return;
+    }
+    setStartingSaved(true);
+    setError(null);
+    setStreamError(false);
+    setDraftPoints([]);
+    setSavedPoints([]);
+    setDrawing(false);
+
+    try {
+      const result = await startSavedCamera(camera);
+      activateJob(
+        { ...result, source_type: result.source_type || camera.type },
+        result.filename || camera.name
+      );
+      toast.success(result.message || `Started ${camera.name}`);
+      refreshHistory();
+    } catch (err) {
+      const msg =
+        err.message ||
+        `Could not start ${camera.name}. Backend may not support ${camera.type} yet.`;
+      setError(msg);
+      toast.error(msg);
+    } finally {
+      setStartingSaved(false);
+    }
+  }
+
   function onMediaLoad() {
     const el = mediaRef.current;
     if (!el) return;
@@ -539,15 +579,19 @@ export function LiveFeedCard({ compact = false }) {
     if (!jobId || !canStop) return;
     setStopping(true);
     try {
-      const result = isWebcam
-        ? await stopWebcam(jobId)
-        : await stopVideoJob(jobId);
-      const nextStatus = result.status || (isWebcam ? "stopping" : "cancelled");
+      const result = await stopLiveSource(jobId, sourceType);
+      const nextStatus =
+        result.status ||
+        (isWebcam || isRtsp || isHttp ? "stopping" : "cancelled");
       setJob((prev) => ({ ...prev, ...result, status: nextStatus }));
       setHistory((prev) =>
         patchJobInList(prev, jobId, { status: nextStatus })
       );
-      toast.info(isWebcam ? "Webcam stop requested." : "Processing stopped.");
+      toast.info(
+        isWebcam || isRtsp || isHttp
+          ? "Live source stop requested."
+          : "Processing stopped."
+      );
       refreshHistory();
     } catch (err) {
       toast.error(err.message || "Could not stop job");
@@ -584,9 +628,15 @@ export function LiveFeedCard({ compact = false }) {
             <p className="m-0 text-xs text-muted">
               {label
                 ? `AI-annotated stream · ${label}${
-                    isWebcam ? " · webcam" : ""
+                    isWebcam
+                      ? " · webcam"
+                      : isRtsp
+                        ? " · rtsp"
+                        : isHttp
+                          ? " · http"
+                          : ""
                   }`
-                : "Upload .mp4 or start webcam for live AI monitoring"}
+                : "Upload · webcam · or start a saved camera"}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -594,7 +644,8 @@ export function LiveFeedCard({ compact = false }) {
               status={status}
               tone={tone}
               progress={progress}
-              isWebcam={isWebcam}
+              isLiveSource={isWebcam || isRtsp || isHttp}
+              sourceType={sourceType}
             />
             <input
               ref={fileInputRef}
@@ -634,7 +685,47 @@ export function LiveFeedCard({ compact = false }) {
           </div>
         </div>
 
-        {(status === "queued" || status === "processing") && !isWebcam && (
+        <div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-2">
+          <span className="text-[0.7rem] font-semibold uppercase tracking-wide text-muted">
+            Saved source
+          </span>
+          <select
+            value={selectedCameraId}
+            onChange={(e) => setSelectedCameraId(e.target.value)}
+            disabled={busy}
+            className="min-w-[10rem] flex-1 rounded-xl border border-line bg-elevated px-2.5 py-1.5 text-xs font-medium text-ink outline-none focus:border-accent disabled:opacity-60 sm:flex-none sm:min-w-[14rem]"
+          >
+            <option value="">
+              {enabledCameras.length
+                ? "Select camera…"
+                : "No enabled cameras"}
+            </option>
+            {enabledCameras.map((cam) => (
+              <option key={cam.id} value={cam.id}>
+                {cam.name} ({cam.type})
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            disabled={busy || !selectedCameraId}
+            onClick={handleStartSavedCamera}
+            className="inline-flex cursor-pointer items-center rounded-xl bg-accent px-3 py-1.5 text-xs font-semibold text-white hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {startingSaved ? "Starting…" : "Start selected"}
+          </button>
+          <Link
+            to="/cameras"
+            className="text-xs font-semibold text-sky-600 hover:underline dark:text-sky-400"
+          >
+            Manage cameras
+          </Link>
+        </div>
+
+        {(status === "queued" || status === "processing") &&
+          !isWebcam &&
+          !isRtsp &&
+          !isHttp && (
           <div className="border-b border-line px-4 py-2">
             <div className="flex items-center justify-between text-[0.7rem] font-semibold text-muted">
               <span>{status === "queued" ? "Queued" : "Processing"}</span>
@@ -648,10 +739,12 @@ export function LiveFeedCard({ compact = false }) {
             </div>
           </div>
         )}
-        {(status === "queued" || status === "processing") && isWebcam ? (
+        {(status === "queued" || status === "processing") &&
+        (isWebcam || isRtsp || isHttp) ? (
           <div className="border-b border-line px-4 py-2">
             <p className="m-0 text-[0.7rem] font-semibold text-muted">
-              Webcam live · progress stays 0 (no fixed frame count)
+              Live source ({sourceType}) · progress stays 0 (no fixed frame
+              count)
             </p>
           </div>
         ) : null}
@@ -1031,15 +1124,30 @@ function JobHistoryPanel({
   );
 }
 
-function StatusChip({ status, tone, progress, isWebcam = false }) {
+function StatusChip({
+  status,
+  tone,
+  progress,
+  isLiveSource = false,
+  sourceType = null,
+}) {
+  const liveLabel =
+    sourceType === "rtsp"
+      ? "Live · RTSP"
+      : sourceType === "http"
+        ? "Live · HTTP"
+        : sourceType === "webcam"
+          ? "Live · Webcam"
+          : "Live";
+
   const label =
     status === "processing"
-      ? isWebcam
-        ? "Live · Webcam"
+      ? isLiveSource
+        ? liveLabel
         : `Live · ${Math.round(progress || 0)}%`
       : status === "queued"
-        ? isWebcam
-          ? "Webcam queued"
+        ? isLiveSource
+          ? `${liveLabel} queued`
           : "Queued"
         : status === "stopping"
           ? "Stopping…"

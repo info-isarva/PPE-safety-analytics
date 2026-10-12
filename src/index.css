@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 @theme {
-  --font-sans: "DM Sans", system-ui, sans-serif;
+  --font-sans: "Inter", "DM Sans", system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, monospace;
 
   --color-base: var(--theme-base);
@@ -31,75 +31,81 @@
   --color-warn-soft: var(--theme-warn-soft);
 }
 
-/* Light (default) */
+/* Light (default) — Isarva Nethra navy/blue */
 :root,
 [data-theme="light"] {
-  --theme-base: #e8eef5;
+  --theme-base: #f5f9ff;
   --theme-panel: #ffffff;
-  --theme-panel-hover: #f3f6fa;
-  --theme-elevated: #f0f4f9;
-  --theme-line: #d5dee9;
-  --theme-line-strong: #b7c5d6;
+  --theme-panel-hover: #f0f6ff;
+  --theme-elevated: #eaf4ff;
+  --theme-line: #e5eaf2;
+  --theme-line-strong: #c9d5e5;
 
-  --theme-ink: #0f172a;
-  --theme-muted: #475569;
-  --theme-dim: #64748b;
+  --theme-ink: #17233d;
+  --theme-muted: #64748b;
+  --theme-dim: #94a3b8;
 
-  --theme-sidebar: #10243a;
-  --theme-sidebar-ink: #e8eef5;
-  --theme-sidebar-muted: #8fa3bb;
+  --theme-sidebar: #0f2a4a;
+  --theme-sidebar-ink: #eaf4ff;
+  --theme-sidebar-muted: #9bb0c9;
 
-  --theme-accent: #d97706;
-  --theme-accent-hover: #b45309;
-  --theme-accent-soft: rgba(217, 119, 6, 0.12);
+  --theme-accent: #1677e8;
+  --theme-accent-hover: #168cf5;
+  --theme-accent-soft: rgba(22, 119, 232, 0.12);
+  --theme-nav-active: #1677e8;
+  --theme-nav-active-end: #38a8ff;
+  --theme-brand-soft: #eaf4ff;
 
-  --theme-ok: #15803d;
-  --theme-ok-soft: rgba(21, 128, 61, 0.12);
+  --theme-ok: #16a34a;
+  --theme-ok-soft: rgba(22, 163, 74, 0.12);
   --theme-danger: #dc2626;
   --theme-danger-soft: rgba(220, 38, 38, 0.1);
-  --theme-warn: #c2410c;
-  --theme-warn-soft: rgba(194, 65, 12, 0.1);
+  --theme-warn: #d97706;
+  --theme-warn-soft: rgba(217, 119, 6, 0.12);
 
-  --theme-chart-grid: #d5dee9;
-  --theme-chart-tick: #5b6f86;
+  --theme-chart-grid: #e5eaf2;
+  --theme-chart-tick: #64748b;
   --theme-chart-tooltip-bg: #ffffff;
-  --theme-chart-tooltip-border: #d5dee9;
-  --theme-chart-tooltip-text: #122033;
+  --theme-chart-tooltip-border: #e5eaf2;
+  --theme-chart-tooltip-text: #17233d;
 }
 
-/* Dark */
+/* Dark — Isarva Nethra navy/blue */
 [data-theme="dark"] {
-  --theme-base: #0c1118;
-  --theme-panel: #151d2a;
-  --theme-panel-hover: #1c2738;
-  --theme-elevated: #1f2b3d;
-  --theme-line: #2a384c;
-  --theme-line-strong: #3d516b;
+  --theme-base: #0a1628;
+  --theme-panel: #10233f;
+  --theme-panel-hover: #15304f;
+  --theme-elevated: #18385a;
+  --theme-line: #234566;
+  --theme-line-strong: #2f5a82;
 
-  --theme-ink: #eef3fa;
-  --theme-muted: #93a4bc;
-  --theme-dim: #62758f;
+  --theme-ink: #eaf4ff;
+  --theme-muted: #9bb0c9;
+  --theme-dim: #6b8099;
 
-  --theme-sidebar: #0a1018;
-  --theme-sidebar-ink: #eef3fa;
-  --theme-sidebar-muted: #8b9bb4;
+  --theme-sidebar: #0a1c33;
+  --theme-sidebar-ink: #eaf4ff;
+  --theme-sidebar-muted: #8aa0bb;
 
-  --theme-accent: #f5b800;
-  --theme-accent-hover: #ffc933;
-  --theme-accent-soft: rgba(245, 184, 0, 0.14);
+  --theme-accent: #168cf5;
+  --theme-accent-hover: #38a8ff;
+  --theme-accent-soft: rgba(56, 168, 255, 0.16);
+  --theme-nav-active: #1677e8;
+  --theme-nav-active-end: #38a8ff;
+  --theme-brand-soft: rgba(22, 119, 232, 0.2);
 
-  --theme-ok: #2ecc71;
-  --theme-ok-soft: rgba(46, 204, 113, 0.14);
+  --theme-ok: #22c55e;
+  --theme-ok-soft: rgba(34, 197, 94, 0.14);
   --theme-danger: #ff5a4e;
   --theme-danger-soft: rgba(255, 90, 78, 0.14);
   --theme-warn: #f0a020;
   --theme-warn-soft: rgba(240, 160, 32, 0.14);
 
-  --theme-chart-grid: #2a384c;
-  --theme-chart-tick: #8b9bb4;
-  --theme-chart-tooltip-bg: #1a2332;
-  --theme-chart-tooltip-border: #2a384c;
-  --theme-chart-tooltip-text: #e8eef6;
+  --theme-chart-grid: #234566;
+  --theme-chart-tick: #9bb0c9;
+  --theme-chart-tooltip-bg: #10233f;
+  --theme-chart-tooltip-border: #234566;
+  --theme-chart-tooltip-text: #eaf4ff;
 }
 
 @keyframes fade-up {
@@ -405,4 +411,170 @@
 
 .ppe-datepicker-calendar .react-datepicker__triangle {
   display: none;
+}
+
+/* Continuous brand bar: logo rail + top header share navy + logo greens */
+.nethra-header {
+  --nethra-lime: #8fad00;
+  --nethra-gold: #c9b000;
+  --nethra-lime-deep: #6f8a00;
+  --nethra-lime-soft: rgba(143, 173, 0, 0.2);
+  --nethra-navy: #0f2a4a;
+  background: #0f2a4a;
+  border-bottom: 1px solid rgba(143, 173, 0, 0.28);
+  color: #eaf4ff;
+}
+
+.nethra-logo-rail {
+  background: #0f2a4a;
+  border-bottom-color: rgba(143, 173, 0, 0.28) !important;
+}
+
+:root[data-theme="dark"] .nethra-header {
+  background: #0a1c33;
+  border-bottom-color: rgba(160, 190, 40, 0.25);
+  --nethra-lime: #a3c420;
+  --nethra-gold: #d4c030;
+  --nethra-lime-deep: #8fad00;
+  --nethra-lime-soft: rgba(163, 196, 32, 0.18);
+}
+
+:root[data-theme="dark"] .nethra-logo-rail {
+  background: #0a1c33;
+  border-bottom-color: rgba(160, 190, 40, 0.25) !important;
+}
+
+.nethra-header-btn {
+  border-color: rgba(143, 173, 0, 0.32);
+  background: rgba(255, 255, 255, 0.06);
+  color: #eaf4ff;
+}
+
+.nethra-header-btn:hover {
+  border-color: var(--nethra-lime);
+  background: var(--nethra-lime-soft);
+  color: var(--nethra-lime);
+}
+
+.nethra-header-search {
+  border-color: rgba(143, 173, 0, 0.28);
+  background: rgba(255, 255, 255, 0.08);
+  color: #eaf4ff;
+}
+
+.nethra-header-search::placeholder {
+  color: #9bb0c9;
+}
+
+.nethra-header-search:focus {
+  border-color: var(--nethra-lime);
+  box-shadow: 0 0 0 3px var(--nethra-lime-soft);
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.nethra-header-live {
+  background: var(--nethra-lime-soft);
+  color: var(--nethra-lime);
+}
+
+.nethra-header-live-dot {
+  background: var(--nethra-lime);
+  box-shadow: 0 0 0 3px var(--nethra-lime-soft);
+}
+
+.nethra-header-kbd {
+  border-color: rgba(143, 173, 0, 0.28);
+  background: rgba(0, 0, 0, 0.25);
+  color: #c9d5e5;
+}
+
+.nethra-header-admin {
+  border-color: rgba(143, 173, 0, 0.28);
+  background: rgba(255, 255, 255, 0.06);
+  color: #eaf4ff;
+}
+
+.nethra-header-admin-avatar {
+  background: linear-gradient(135deg, #0a7a38, #8fad00);
+  color: #0f2a4a;
+}
+
+.nethra-header-theme > div {
+  border-color: rgba(143, 173, 0, 0.32) !important;
+  background: rgba(255, 255, 255, 0.06) !important;
+}
+
+.nethra-header-theme button {
+  color: #9bb0c9;
+}
+
+.nethra-header-theme button[aria-pressed="true"] {
+  background: rgba(143, 173, 0, 0.28) !important;
+  color: #dce8a8 !important;
+  box-shadow: none !important;
+}
+
+.nethra-header-theme button:hover {
+  color: #eaf4ff;
+}
+
+/* Cameras & sources info banner */
+.cameras-sources-banner {
+  position: relative;
+  overflow: hidden;
+  min-height: 92px;
+  border: 1px solid #b9d9ff;
+  border-radius: 18px;
+  background: linear-gradient(105deg, #f7fbff 0%, #eff7ff 58%, #e5f2ff 100%);
+  box-shadow: 0 4px 14px rgba(35, 103, 166, 0.08);
+}
+
+.cameras-sources-banner::after {
+  content: "";
+  position: absolute;
+  inset: 0 0 0 55%;
+  background: radial-gradient(
+    circle at 80% 40%,
+    rgba(199, 227, 255, 0.55),
+    transparent 58%
+  );
+  pointer-events: none;
+}
+
+.cameras-sources-badge {
+  position: absolute;
+  top: 50%;
+  right: 16px;
+  z-index: 3;
+  transform: translateY(-50%);
+}
+
+.cameras-sources-content {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  max-width: min(100%, 52rem);
+  padding: 20px 110px 20px 22px;
+}
+
+@media (max-width: 768px) {
+  .cameras-sources-badge {
+    position: static;
+    transform: none;
+    margin-left: auto;
+  }
+
+  .cameras-sources-content {
+    padding: 18px 16px;
+    width: 100%;
+  }
+
+  .cameras-sources-banner {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding-right: 12px;
+  }
 }

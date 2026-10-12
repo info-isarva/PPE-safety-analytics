@@ -9,11 +9,15 @@ export function FilterSelect({
   placement = "bottom",
   open: openProp,
   onOpenChange,
+  disabled = false,
+  labelClassName,
+  className = "",
 }) {
   const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
   const isControlled = openProp !== undefined;
-  const open = isControlled ? openProp : uncontrolledOpen;
+  const open = disabled ? false : isControlled ? openProp : uncontrolledOpen;
   const setOpen = (next) => {
+    if (disabled) return;
     const valueNext = typeof next === "function" ? next(open) : next;
     if (!isControlled) setUncontrolledOpen(valueNext);
     onOpenChange?.(valueNext);
@@ -69,11 +73,14 @@ export function FilterSelect({
       ref={rootRef}
       className={`relative flex min-w-0 flex-1 flex-col gap-1.5 ${
         open ? "z-50" : "z-0"
-      }`}
+      } ${className}`}
     >
       <span
         id={labelId}
-        className="text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-muted"
+        className={
+          labelClassName ??
+          "text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-muted"
+        }
       >
         {label}
       </span>
@@ -84,8 +91,9 @@ export function FilterSelect({
         aria-expanded={open}
         aria-controls={listId}
         aria-labelledby={labelId}
+        disabled={disabled}
         onClick={() => setOpen(!open)}
-        className={`flex w-full cursor-pointer items-center justify-between gap-2 rounded-xl border bg-elevated px-3 py-2.5 text-left text-sm font-semibold shadow-sm transition-all ${
+        className={`flex w-full cursor-pointer items-center justify-between gap-2 rounded-xl border bg-elevated px-3 py-2.5 text-left text-sm font-semibold shadow-sm transition-all disabled:cursor-not-allowed disabled:opacity-60 ${
           open
             ? "border-accent bg-panel ring-2 ring-accent/25"
             : "border-line hover:border-line-strong hover:bg-panel"
@@ -105,7 +113,7 @@ export function FilterSelect({
           id={listId}
           role="listbox"
           aria-labelledby={labelId}
-          className={`absolute left-0 right-0 ${menuPosition} z-50 m-0 max-h-56 list-none overflow-y-auto rounded-xl border border-line bg-panel p-1.5 shadow-[0_16px_40px_rgba(15,23,42,0.16)] animate-fade-in`}
+          className={`absolute left-0 right-0 ${menuPosition} z-50 m-0 max-h-56 w-full list-none overflow-y-auto rounded-xl border border-line bg-panel p-1.5 shadow-[0_16px_40px_rgba(15,23,42,0.16)] animate-fade-in`}
         >
           {options.map((opt) => {
             const isSelected = opt.id === value;

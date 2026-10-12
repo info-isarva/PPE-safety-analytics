@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="176" height="120" viewBox="0 0 176 120" fill="none" role="img" aria-label="CCTV camera">
+  <defs>
+    <linearGradient id="bodyMain" x1="40" y1="28" x2="140" y2="96" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#F3F8FF"/>
+    </linearGradient>
+    <linearGradient id="visor" x1="70" y1="34" x2="140" y2="58" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#D6E8FF"/>
+      <stop offset="1" stop-color="#9EC5F5"/>
+    </linearGradient>
+    <linearGradient id="lensGrad" x1="108" y1="48" x2="148" y2="88" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2B6CB0"/>
+      <stop offset="1" stop-color="#0F2A4A"/>
+    </linearGradient>
+    <linearGradient id="mountGrad" x1="20" y1="24" x2="56" y2="50" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#38A8FF"/>
+      <stop offset="1" stop-color="#1677E8"/>
+    </linearGradient>
+    <filter id="softShadow" x="-20" y="-10" width="220" height="160" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="10" stdDeviation="8" flood-color="#123B66" flood-opacity="0.16"/>
+    </filter>
+  </defs>
+
+  <!-- cable -->
+  <path d="M52 98c-7 9-9 18-7 26" stroke="#1A2B4B" stroke-width="3.5" stroke-linecap="round"/>
+
+  <g filter="url(#softShadow)">
+    <!-- blue accent blocks behind -->
+    <rect x="34" y="36" width="22" height="48" rx="8" fill="#B7D4F8" opacity="0.85"/>
+    <rect x="22" y="28" width="18" height="14" rx="4" fill="url(#mountGrad)"/>
+
+    <!-- main housing -->
+    <rect x="48" y="40" width="96" height="52" rx="16" fill="url(#bodyMain)" stroke="#D6E6F8" stroke-width="1.5"/>
+
+    <!-- light-blue top visor -->
+    <path d="M56 40h72c8 0 14 4 16 10H54c2-6 6-10 12-10Z" fill="url(#visor)"/>
+
+    <!-- front face -->
+    <rect x="86" y="48" width="50" height="36" rx="12" fill="#EEF5FF" stroke="#C9DBF0"/>
+
+    <!-- lens -->
+    <circle cx="118" cy="66" r="16" fill="url(#lensGrad)" stroke="#FFFFFF" stroke-width="3"/>
+    <circle cx="118" cy="66" r="8" fill="#0A1C33"/>
+    <circle cx="113" cy="61" r="2.8" fill="#EAF4FF" opacity="0.95"/>
+  </g>
+</svg>

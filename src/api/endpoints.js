@@ -138,4 +138,141 @@ export function stopWebcam(jobId) {
   });
 }
 
+/* ---------- RTSP / CCTV live source ---------- */
+
+/** Start RTSP camera processing. */
+export function startRtsp({ rtspUrl, label, transport = "tcp" }) {
+  return apiFetch("/video/rtsp/start", {
+    method: "POST",
+    json: {
+      rtsp_url: rtspUrl,
+      label: label || "RTSP Camera",
+      transport: transport || "tcp",
+    },
+  });
+}
+
+export function stopRtsp(jobId) {
+  return apiFetch(`/video/rtsp/${jobId}/stop`, {
+    method: "POST",
+  });
+}
+
+/** Start HTTP/MJPEG camera if backend supports it. */
+export function startHttpCamera({ url, label }) {
+  return apiFetch("/video/http/start", {
+    method: "POST",
+    json: {
+      url,
+      label: label || "HTTP Camera",
+    },
+  });
+}
+
+export function stopHttpCamera(jobId) {
+  return apiFetch(`/video/http/${jobId}/stop`, {
+    method: "POST",
+  });
+}
+
+/**
+ * Start a saved camera registry entry.
+ * Returns the backend job payload (job_id, stream_url, ...).
+ */
+export async function startSavedCamera(camera) {
+  if (!camera) throw new Error("No camera selected");
+  const type = camera.type;
+
+  if (type === "webcam") {
+    return startWebcam(camera.camera_index ?? 0);
+  }
+  if (type === "rtsp") {
+    return startRtsp({
+      rtspUrl: camera.url,
+      label: camera.name,
+      transport: camera.transport || "tcp",
+    });
+  }
+  if (type === "http") {
+    return startHttpCamera({ url: camera.url, label: camera.name });
+  }
+  throw new Error(`Unsupported camera type: ${type}`);
+}
+
+/** Stop by source type when known; falls back to generic job stop. */
+export async function stopLiveSource(jobId, sourceType) {
+  if (!jobId) throw new Error("Missing job id");
+  if (sourceType === "webcam") return stopWebcam(jobId);
+  if (sourceType === "rtsp") return stopRtsp(jobId);
+  if (sourceType === "http") return stopHttpCamera(jobId);
+  return stopVideoJob(jobId);
+}
+
+/* ---------- Dataset & model management ---------- */
+
+/** Upload a YOLO dataset ZIP (`multipart/form-data`, field: file). */
+export function uploadDataset(file) {
+  const form = new FormData();
+  form.append("file", file);
+  return apiFetch("/datasets/upload", {
+    method: "POST",
+    body: form,
+  });
+}
+
+/**
+ * Start training on a validated dataset.
+ * @param {string} datasetId
+ * @param {{ model_name: string, epochs?: number, imgsz?: number, batch?: number, device?: string }} config
+ */
+export function startDatasetTraining(datasetId, config) {
+  const id = encodeURIComponent(String(datasetId));
+  return apiFetch(`/datasets/${id}/train`, {
+    method: "POST",
+    json: {
+      model_name: config.model_name,
+      epochs: Number(config.epochs ?? 30),
+      imgsz: Number(config.imgsz ?? 320),
+      batch: Number(config.batch ?? 4),
+      device: config.device || "cpu",
+    },
+  });
+}
+
+/** Poll training job status / progress. */
+export function getTrainingStatus(jobId) {
+  const id = encodeURIComponent(String(jobId));
+  return apiFetch(`/training/${id}`);
+}
+
+/** List all trained models. */
+export function getModels() {
+  return apiFetch("/models");
+}
+
+/** Currently active detection model (404/null when none). */
+export async function getActiveModel() {
+  try {
+    return await apiFetch("/models/active");
+  } catch (err) {
+    if (err?.status === 404) return null;
+    throw err;
+  }
+}
+
+/** Rename a trained model. */
+export function renameModel(modelId, name) {
+  return apiFetch(`/models/${modelId}`, {
+    method: "PUT",
+    json: { name },
+  });
+}
+
+/** Activate a trained model for the detection pipeline. */
+export function activateModel(modelId) {
+  return apiFetch(`/models/${modelId}/activate`, {
+    method: "POST",
+  });
+}
+
 export { API_BASE_URL };

@@ -12,6 +12,8 @@ import EventDetail from "./pages/EventDetail";
 import LiveMonitor from "./pages/LiveMonitor";
 import Reports from "./pages/Reports";
 import Settings from "./pages/Settings";
+import Cameras from "./pages/Cameras";
+import Models from "./pages/Models";
 
 const isDesktop =
   typeof window !== "undefined" && Boolean(window.desktopApp?.isDesktop);
@@ -27,6 +29,8 @@ export default function App() {
           <Route path="incidents" element={<Incidents />} />
           <Route path="incidents/:id" element={<EventDetail />} />
           <Route path="live" element={<LiveMonitor />} />
+          <Route path="cameras" element={<Cameras />} />
+          <Route path="models" element={<Models />} />
           <Route path="reports" element={<Reports />} />
           <Route path="settings" element={<Settings />} />
           <Route path="*" element={<Navigate to="/" replace />} />

@@ -5,13 +5,16 @@ import App from "./App.jsx";
 import { ThemeProvider } from "./theme/ThemeContext.jsx";
 import { ToastProvider } from "./components/common/ToastContext.jsx";
 import { BrandLogoProvider } from "./settings/BrandLogoContext.jsx";
+import { CameraSourcesProvider } from "./cameras/CameraSourcesContext.jsx";
 
 createRoot(document.getElementById("root")).render(
   <StrictMode>
     <ThemeProvider>
       <ToastProvider>
         <BrandLogoProvider>
-          <App />
+          <CameraSourcesProvider>
+            <App />
+          </CameraSourcesProvider>
         </BrandLogoProvider>
       </ToastProvider>
     </ThemeProvider>
