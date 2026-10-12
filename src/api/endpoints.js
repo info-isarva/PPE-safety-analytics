@@ -258,15 +258,65 @@ export function getTrainingStatus(jobId) {
   return apiFetch(`/training/${id}`);
 }
 
+/** Normalize backend model payloads (`id` vs `model_id`, metrics aliases, etc.). */
+export function normalizeModel(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const id =
+    raw.id ??
+    raw.model_id ??
+    raw.modelId ??
+    raw.trained_model_id ??
+    raw.pk ??
+    null;
+  const metrics = raw.metrics && typeof raw.metrics === "object" ? raw.metrics : {};
+  return {
+    ...raw,
+    id,
+    name: raw.name ?? raw.model_name ?? "Untitled model",
+    status: raw.status ?? "completed",
+    active: Boolean(raw.active ?? raw.is_active),
+    precision: raw.precision ?? metrics.precision,
+    recall: raw.recall ?? metrics.recall,
+    map50:
+      raw.map50 ??
+      raw.mAP50 ??
+      raw.map_50 ??
+      metrics.map50 ??
+      metrics.mAP50 ??
+      metrics.map_50,
+    map50_95:
+      raw.map50_95 ??
+      raw.mAP50_95 ??
+      raw.map5095 ??
+      metrics.map50_95 ??
+      metrics.mAP50_95,
+  };
+}
+
+function normalizeModelList(payload) {
+  const list = Array.isArray(payload)
+    ? payload
+    : Array.isArray(payload?.models)
+      ? payload.models
+      : Array.isArray(payload?.items)
+        ? payload.items
+        : Array.isArray(payload?.data)
+          ? payload.data
+          : [];
+  return list.map(normalizeModel).filter(Boolean);
+}
+
 /** List all trained models. */
-export function getModels() {
-  return apiFetch("/models");
+export async function getModels() {
+  const payload = await apiFetch("/models");
+  return normalizeModelList(payload);
 }
 
 /** Currently active detection model (404/null when none). */
 export async function getActiveModel() {
   try {
-    return await apiFetch("/models/active");
+    const payload = await apiFetch("/models/active");
+    return normalizeModel(payload);
   } catch (err) {
     if (err?.status === 404) return null;
     throw err;
@@ -275,17 +325,24 @@ export async function getActiveModel() {
 
 /** Rename a trained model. */
 export function renameModel(modelId, name) {
-  return apiFetch(`/models/${modelId}`, {
+  if (modelId == null || modelId === "") {
+    return Promise.reject(new Error("Missing model id"));
+  }
+  return apiFetch(`/models/${encodeURIComponent(String(modelId))}`, {
     method: "PUT",
     json: { name },
-  });
+  }).then(normalizeModel);
 }
 
 /** Activate a trained model for the detection pipeline. */
 export function activateModel(modelId) {
-  return apiFetch(`/models/${modelId}/activate`, {
-    method: "POST",
-  });
+  if (modelId == null || modelId === "") {
+    return Promise.reject(new Error("Missing model id — refresh the models list"));
+  }
+  return apiFetch(
+    `/models/${encodeURIComponent(String(modelId))}/activate`,
+    { method: "POST" }
+  ).then(normalizeModel);
 }
 
 export { API_BASE_URL };

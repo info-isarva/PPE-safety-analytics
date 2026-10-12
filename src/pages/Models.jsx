@@ -128,7 +128,7 @@ export default function Models() {
         getModels(),
         getActiveModel(),
       ]);
-      setModels(Array.isArray(list) ? list : list?.models || []);
+      setModels(Array.isArray(list) ? list : []);
       setActive(activeModel);
     } catch (err) {
       setModelsError(err.message || "Failed to load models");
@@ -294,9 +294,16 @@ export default function Models() {
   }
 
   async function handleActivate(model) {
-    setBusyModelId(model.id);
+    const modelId = model?.id ?? model?.model_id;
+    if (modelId == null || modelId === "") {
+      toast.error(
+        "This model has no id from the API. Refresh the list or check GET /models response fields."
+      );
+      return;
+    }
+    setBusyModelId(modelId);
     try {
-      await activateModel(model.id);
+      await activateModel(modelId);
       toast.success(`Activated · ${model.name}`);
       await refreshModels();
     } catch (err) {
@@ -312,9 +319,14 @@ export default function Models() {
       toast.error("Name cannot be empty");
       return;
     }
-    setBusyModelId(model.id);
+    const modelId = model?.id ?? model?.model_id;
+    if (modelId == null || modelId === "") {
+      toast.error("This model has no id from the API");
+      return;
+    }
+    setBusyModelId(modelId);
     try {
-      await renameModel(model.id, name);
+      await renameModel(modelId, name);
       toast.success("Model renamed");
       setEditingId(null);
       await refreshModels();
@@ -727,8 +739,8 @@ export default function Models() {
                                 Inactive
                               </span>
                             )}
-                            <span className="text-[0.7rem] text-muted">
-                              ID {model.id}
+                              <span className="text-[0.7rem] text-muted">
+                              ID {model.id ?? model.model_id ?? "—"}
                             </span>
                           </div>
                           {(model.precision != null ||
@@ -763,11 +775,14 @@ export default function Models() {
                           {!isActive ? (
                             <button
                               type="button"
-                              disabled={busyModelId === model.id}
+                              disabled={
+                                busyModelId === (model.id ?? model.model_id) ||
+                                (model.id == null && model.model_id == null)
+                              }
                               onClick={() => handleActivate(model)}
                               className="rounded-lg bg-accent px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-accent-hover disabled:opacity-60"
                             >
-                              {busyModelId === model.id
+                              {busyModelId === (model.id ?? model.model_id)
                                 ? "Activating…"
                                 : "Activate"}
                             </button>
