@@ -233,20 +233,22 @@ export function uploadDataset(file, name) {
 
 /**
  * Start training on a validated dataset.
+ * Backend expects training options as query params (not JSON body), e.g.:
+ * POST /datasets/{dataset_id}/train?model_name=...&epochs=30&imgsz=320&batch=4&device=cpu
  * @param {string} datasetId
  * @param {{ model_name: string, epochs?: number, imgsz?: number, batch?: number, device?: string }} config
  */
 export function startDatasetTraining(datasetId, config) {
   const id = encodeURIComponent(String(datasetId));
-  return apiFetch(`/datasets/${id}/train`, {
+  const q = new URLSearchParams({
+    model_name: String(config.model_name || "").trim(),
+    epochs: String(Number(config.epochs ?? 30)),
+    imgsz: String(Number(config.imgsz ?? 320)),
+    batch: String(Number(config.batch ?? 4)),
+    device: String(config.device || "cpu"),
+  });
+  return apiFetch(`/datasets/${id}/train?${q}`, {
     method: "POST",
-    json: {
-      model_name: config.model_name,
-      epochs: Number(config.epochs ?? 30),
-      imgsz: Number(config.imgsz ?? 320),
-      batch: Number(config.batch ?? 4),
-      device: config.device || "cpu",
-    },
   });
 }
 
