@@ -1,6 +1,11 @@
 import { useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
+  startCamera,
+  stopCamera,
+  testCamera,
+} from "../api/endpoints";
+import {
   SOURCE_TYPES,
   useCameraSources,
 } from "../cameras/CameraSourcesContext";
@@ -140,6 +145,16 @@ function ResetIcon({ className }) {
   );
 }
 
+function statusLabel(status) {
+  const s = String(status || "not_connected").toLowerCase();
+  if (s === "processing" || s === "starting") return "Processing";
+  if (s === "stopping") return "Stopping";
+  if (s === "idle") return "Idle";
+  if (s === "failed" || s === "error") return "Failed";
+  if (s === "not_tested") return "Not tested";
+  return "Not connected";
+}
+
 function StatusPill({ cam }) {
   if (!cam.enabled) {
     return (
@@ -149,17 +164,37 @@ function StatusPill({ cam }) {
       </span>
     );
   }
+  const s = String(cam.status || "").toLowerCase();
+  const processing = s === "processing" || s === "starting";
+  const failed = s === "failed" || s === "error";
   return (
-    <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-ok">
-      <span className="h-2 w-2 rounded-full bg-ok" />
-      Online
+    <span
+      className={`inline-flex items-center gap-1.5 text-xs font-semibold ${
+        failed ? "text-danger" : processing ? "text-accent" : "text-muted"
+      }`}
+    >
+      <span
+        className={`h-2 w-2 rounded-full ${
+          failed ? "bg-danger" : processing ? "bg-accent" : "bg-dim"
+        }`}
+      />
+      {statusLabel(cam.status)}
     </span>
   );
 }
 
 export default function Cameras() {
   const toast = useToast();
-  const { cameras, upsertCamera, removeCamera, setEnabled } = useCameraSources();
+  const {
+    cameras,
+    loading,
+    error: loadError,
+    refreshCameras,
+    upsertCamera,
+    removeCamera,
+    setEnabled,
+    patchLocalCamera,
+  } = useCameraSources();
   const [form, setForm] = useState(EMPTY_FORM);
   const [editingId, setEditingId] = useState(null);
   const [errors, setErrors] = useState({});
@@ -168,6 +203,8 @@ export default function Cameras() {
   const [typeFilter, setTypeFilter] = useState("all");
   const [showFilter, setShowFilter] = useState(false);
   const [testingId, setTestingId] = useState(null);
+  const [actionId, setActionId] = useState(null);
+  const [saving, setSaving] = useState(false);
   const formRef = useRef(null);
 
   const filtered = useMemo(() => {
@@ -226,7 +263,7 @@ export default function Cameras() {
     formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
-  function handleSubmit(event) {
+  async function handleSubmit(event) {
     event.preventDefault();
     const nextErrors = validateSourceForm(form);
     setErrors(nextErrors);
@@ -254,8 +291,9 @@ export default function Cameras() {
       return;
     }
 
+    setSaving(true);
     try {
-      const saved = upsertCamera({
+      const saved = await upsertCamera({
         id: editingId || undefined,
         name: form.name,
         type: form.type,
@@ -264,31 +302,100 @@ export default function Cameras() {
         transport: form.transport,
         notes: form.notes,
         enabled: form.enabled,
-        created_at: cameras.find((c) => c.id === editingId)?.created_at,
       });
-      toast.success(editingId ? `Updated ${saved.name}` : `Added ${saved.name}`);
+      toast.success(
+        editingId ? `Updated ${saved.name}` : `Added ${saved.name}`
+      );
       openCreate();
     } catch (err) {
       toast.error(err.message || "Could not save camera");
+    } finally {
+      setSaving(false);
     }
   }
 
   async function testConnection(cam) {
     setTestingId(cam.id);
-    toast.info(`Connecting to ${cam.name}…`);
-    await new Promise((r) => setTimeout(r, 900));
+    toast.info(`Testing ${cam.name}…`);
     try {
-      if (cam.type === "webcam") {
-        toast.success(`Connected · webcam index ${cam.camera_index ?? 0}`);
-      } else if (cam.type === "rtsp" && /^rtsp:\/\//i.test(cam.url || "")) {
-        toast.success(`Connection check passed for ${cam.name}`);
-      } else if (cam.type === "http" && /^https?:\/\//i.test(cam.url || "")) {
-        toast.success(`Connection check passed for ${cam.name}`);
-      } else {
-        toast.error(`Connection failed for ${cam.name}`);
+      const result = await testCamera(cam.id);
+      if (result?.status) {
+        patchLocalCamera(cam.id, { status: result.status });
       }
+      toast.success(
+        result?.message || `Connection check finished for ${cam.name}`
+      );
+      await refreshCameras().catch(() => {});
+    } catch (err) {
+      toast.error(err.message || `Connection failed for ${cam.name}`);
     } finally {
       setTestingId(null);
+    }
+  }
+
+  async function handleStart(cam) {
+    setActionId(cam.id);
+    try {
+      const result = await startCamera(cam.id);
+      patchLocalCamera(cam.id, {
+        status: result?.status || "starting",
+        job_id: result?.job_id ?? null,
+        stream_url: result?.stream_url ?? null,
+      });
+      toast.success(
+        result?.message || `Started ${result?.camera_name || cam.name}`
+      );
+      await refreshCameras().catch(() => {});
+    } catch (err) {
+      toast.error(err.message || `Could not start ${cam.name}`);
+    } finally {
+      setActionId(null);
+    }
+  }
+
+  async function handleStop(cam) {
+    setActionId(cam.id);
+    try {
+      const result = await stopCamera(cam.id);
+      patchLocalCamera(cam.id, {
+        status: result?.status || "idle",
+        job_id: null,
+        stream_url: null,
+      });
+      toast.info(result?.message || `Stop requested for ${cam.name}`);
+      await refreshCameras().catch(() => {});
+    } catch (err) {
+      toast.error(err.message || `Could not stop ${cam.name}`);
+    } finally {
+      setActionId(null);
+    }
+  }
+
+  async function handleToggleEnabled(cam) {
+    setActionId(cam.id);
+    try {
+      await setEnabled(cam.id, !cam.enabled);
+      toast.success(
+        cam.enabled ? `Disabled ${cam.name}` : `Enabled ${cam.name}`
+      );
+    } catch (err) {
+      toast.error(err.message || "Could not update camera");
+    } finally {
+      setActionId(null);
+    }
+  }
+
+  async function handleDelete(cam) {
+    if (!window.confirm(`Delete “${cam.name}”?`)) return;
+    setActionId(cam.id);
+    try {
+      await removeCamera(cam.id);
+      if (editingId === cam.id) openCreate();
+      toast.info("Camera removed");
+    } catch (err) {
+      toast.error(err.message || "Could not delete camera");
+    } finally {
+      setActionId(null);
     }
   }
 
@@ -340,28 +447,54 @@ export default function Cameras() {
             </svg>
           </span>
           <div className="min-w-0">
-            <h2 className="m-0 text-[1.125rem] leading-none font-bold tracking-tight text-[#1A2B4B]">
+            <h2 className="m-0 text-[1.125rem] leading-none font-bold tracking-tight text-ink">
               Cameras & sources
             </h2>
-            <p className="m-0 mt-2 text-[0.875rem] leading-[1.55] text-[#64748B]">
-              Save multiple RTSP, server webcam, or HTTP sources. Start any
-              enabled source from{" "}
+            <p className="m-0 mt-2 text-[0.875rem] leading-[1.55] text-muted">
+              Cameras are stored on the backend. Add RTSP, webcam, or HTTP
+              sources, then start an enabled camera from{" "}
               <Link
                 to="/live"
-                className="font-semibold text-[#1677E8] hover:underline"
+                className="font-semibold text-accent hover:underline"
               >
                 Live
-              </Link>
-              . List is stored in this browser until a backend camera API is
-              available.
+              </Link>{" "}
+              to show the AI-processed stream.
             </p>
           </div>
         </div>
 
-        <span className="cameras-sources-badge inline-flex h-8 items-center rounded-full border border-[#B7D4F8] bg-white px-3.5 text-xs font-bold whitespace-nowrap text-[#123B66] shadow-sm">
-          {cameras.length} saved
-        </span>
+        <div className="cameras-sources-actions">
+          <button
+            type="button"
+            onClick={() => {
+              refreshCameras().catch((err) =>
+                toast.error(err.message || "Could not refresh cameras")
+              );
+            }}
+            className="inline-flex h-8 items-center gap-1.5 rounded-full border border-[#B7D4F8] bg-white px-3.5 text-xs font-bold text-[#123B66] shadow-sm transition-colors hover:bg-[#F5F9FF] dark:border-line dark:bg-panel dark:text-ink dark:hover:bg-panel-hover"
+          >
+            <ResetIcon className="h-3.5 w-3.5" />
+            Refresh
+          </button>
+          <span className="cameras-sources-badge">
+            {loading ? "Loading…" : `${cameras.length} saved`}
+          </span>
+        </div>
       </section>
+
+      {loadError ? (
+        <p className="m-0 rounded-xl bg-danger-soft px-3 py-2 text-sm text-danger">
+          {loadError}{" "}
+          <button
+            type="button"
+            onClick={() => refreshCameras().catch(() => {})}
+            className="ml-2 font-semibold underline"
+          >
+            Retry
+          </button>
+        </p>
+      ) : null}
 
       {/* Two columns */}
       <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-[1.15fr_0.95fr]">
@@ -554,10 +687,15 @@ export default function Cameras() {
           <div className="mt-5 flex flex-wrap items-center gap-2">
             <button
               type="submit"
-              className="inline-flex cursor-pointer items-center gap-1.5 rounded-[10px] bg-accent px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-accent-hover"
+              disabled={saving}
+              className="inline-flex cursor-pointer items-center gap-1.5 rounded-[10px] bg-accent px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-accent-hover disabled:opacity-60"
             >
               <PlusIcon className="h-4 w-4" />
-              {editingId ? "Save changes" : "Add camera"}
+              {saving
+                ? "Saving…"
+                : editingId
+                  ? "Save changes"
+                  : "Add camera"}
             </button>
             <button
               type="button"
@@ -636,7 +774,11 @@ export default function Cameras() {
             </div>
           ) : null}
 
-          {filtered.length === 0 ? (
+          {loading && cameras.length === 0 ? (
+            <p className="m-0 mt-8 text-center text-sm text-muted">
+              Loading cameras from backend…
+            </p>
+          ) : filtered.length === 0 ? (
             <div className="flex flex-1 flex-col items-center justify-center px-4 py-10 text-center">
               <span
                 className="grid h-24 w-24 place-items-center rounded-full"
@@ -662,7 +804,12 @@ export default function Cameras() {
             </div>
           ) : (
             <ul className="m-0 mt-4 flex list-none flex-col gap-3 p-0">
-              {filtered.map((cam) => (
+              {filtered.map((cam) => {
+                const busy = actionId === cam.id || testingId === cam.id;
+                const running =
+                  String(cam.status || "").toLowerCase() === "processing" ||
+                  String(cam.status || "").toLowerCase() === "starting";
+                return (
                 <li
                   key={cam.id}
                   className="rounded-2xl border border-line bg-elevated/40 px-4 py-3.5"
@@ -679,14 +826,10 @@ export default function Cameras() {
                         {typeLabel(cam.type)}
                         {cam.type === "webcam"
                           ? ` · index ${cam.camera_index ?? 0}`
-                          : cam.transport
-                            ? ` · ${String(cam.transport).toUpperCase()}`
-                            : ""}
+                          : ""}
                         {" · "}
                         {cam.enabled ? "Enabled" : "Disabled"}
-                        {cam.updated_at
-                          ? ` · ${new Date(cam.updated_at).toLocaleString()}`
-                          : " · Just now"}
+                        {cam.job_id ? ` · ${cam.job_id}` : ""}
                       </p>
                       {cam.notes ? (
                         <p className="m-0 mt-1 text-xs text-muted">{cam.notes}</p>
@@ -706,43 +849,60 @@ export default function Cameras() {
                       </Link>
                       <button
                         type="button"
+                        disabled={busy}
                         onClick={() => openEdit(cam)}
-                        className="cursor-pointer rounded-lg border border-line bg-panel px-2.5 py-1 text-[0.7rem] font-semibold text-ink hover:bg-elevated"
+                        className="cursor-pointer rounded-lg border border-line bg-panel px-2.5 py-1 text-[0.7rem] font-semibold text-ink hover:bg-elevated disabled:opacity-60"
                       >
                         Edit
                       </button>
                       <button
                         type="button"
-                        disabled={testingId === cam.id}
+                        disabled={busy}
                         onClick={() => testConnection(cam)}
                         className="cursor-pointer rounded-lg border border-line bg-panel px-2.5 py-1 text-[0.7rem] font-semibold text-ink hover:bg-elevated disabled:opacity-60"
                       >
-                        {testingId === cam.id ? "Connecting…" : "Test connection"}
+                        {testingId === cam.id ? "Testing…" : "Test"}
                       </button>
+                      {running ? (
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => handleStop(cam)}
+                          className="cursor-pointer rounded-lg border border-danger/30 bg-danger-soft px-2.5 py-1 text-[0.7rem] font-semibold text-danger disabled:opacity-60"
+                        >
+                          {actionId === cam.id ? "Stopping…" : "Stop"}
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled={busy || !cam.enabled}
+                          onClick={() => handleStart(cam)}
+                          className="cursor-pointer rounded-lg border border-accent/40 bg-accent-soft px-2.5 py-1 text-[0.7rem] font-semibold text-accent hover:bg-accent hover:text-white disabled:opacity-60"
+                        >
+                          {actionId === cam.id ? "Starting…" : "Start"}
+                        </button>
+                      )}
                       <button
                         type="button"
-                        onClick={() => setEnabled(cam.id, !cam.enabled)}
-                        className="cursor-pointer rounded-lg border border-line bg-panel px-2.5 py-1 text-[0.7rem] font-semibold text-muted hover:bg-elevated"
+                        disabled={busy}
+                        onClick={() => handleToggleEnabled(cam)}
+                        className="cursor-pointer rounded-lg border border-line bg-panel px-2.5 py-1 text-[0.7rem] font-semibold text-muted hover:bg-elevated disabled:opacity-60"
                       >
                         {cam.enabled ? "Disable" : "Enable"}
                       </button>
                       <button
                         type="button"
-                        onClick={() => {
-                          if (window.confirm(`Delete “${cam.name}”?`)) {
-                            removeCamera(cam.id);
-                            if (editingId === cam.id) openCreate();
-                            toast.info("Camera removed");
-                          }
-                        }}
-                        className="cursor-pointer rounded-lg border border-danger/30 bg-danger-soft px-2.5 py-1 text-[0.7rem] font-semibold text-danger"
+                        disabled={busy}
+                        onClick={() => handleDelete(cam)}
+                        className="cursor-pointer rounded-lg border border-danger/30 bg-danger-soft px-2.5 py-1 text-[0.7rem] font-semibold text-danger disabled:opacity-60"
                       >
                         Delete
                       </button>
                     </div>
                   </div>
                 </li>
-              ))}
+              );
+              })}
             </ul>
           )}
         </section>

@@ -6,9 +6,12 @@ import {
   useMemo,
   useState,
 } from "react";
-
-const STORAGE_KEY = "ppe-camera-sources";
-const CHANGE_EVENT = "ppe-camera-sources-changed";
+import {
+  createCamera,
+  deleteCamera,
+  getCameras,
+  updateCamera,
+} from "../api/endpoints";
 
 export const SOURCE_TYPES = [
   { id: "rtsp", label: "RTSP / CCTV" },
@@ -16,26 +19,7 @@ export const SOURCE_TYPES = [
   { id: "http", label: "HTTP / MJPEG" },
 ];
 
-function uid() {
-  return `cam_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function readList() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function writeList(list) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
-  window.dispatchEvent(new CustomEvent(CHANGE_EVENT));
-}
-
+/** Client-side validation before calling the Camera Management API. */
 export function normalizeCameraInput(input) {
   const type = String(input.type || "rtsp").toLowerCase();
   const name = String(input.name || "").trim();
@@ -44,13 +28,11 @@ export function normalizeCameraInput(input) {
   const enabled = input.enabled !== false;
   const notes = String(input.notes || "").trim();
   const base = {
-    id: input.id || uid(),
+    id: input.id || input.camera_id || undefined,
     name,
     type,
     enabled,
     notes,
-    updated_at: new Date().toISOString(),
-    created_at: input.created_at || new Date().toISOString(),
   };
 
   if (type === "webcam") {
@@ -62,7 +44,7 @@ export function normalizeCameraInput(input) {
   }
 
   if (type === "rtsp" || type === "http") {
-    const url = String(input.url || "").trim();
+    const url = String(input.url || input.source || "").trim();
     if (!url) throw new Error("Connection URL is required");
     if (type === "rtsp" && !/^rtsp:\/\//i.test(url)) {
       throw new Error("RTSP URL must start with rtsp://");
@@ -84,57 +66,91 @@ export function normalizeCameraInput(input) {
 const CameraSourcesContext = createContext(null);
 
 export function CameraSourcesProvider({ children }) {
-  const [cameras, setCameras] = useState(() => readList());
+  const [cameras, setCameras] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  const refreshCameras = useCallback(async ({ signal } = {}) => {
+    setError(null);
+    try {
+      const list = await getCameras({ signal });
+      setCameras(Array.isArray(list) ? list : []);
+      return list;
+    } catch (err) {
+      if (err?.name === "AbortError") throw err;
+      setError(err.message || "Failed to load cameras");
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    function sync() {
-      setCameras(readList());
-    }
-    window.addEventListener(CHANGE_EVENT, sync);
-    window.addEventListener("storage", sync);
-    return () => {
-      window.removeEventListener(CHANGE_EVENT, sync);
-      window.removeEventListener("storage", sync);
-    };
-  }, []);
+    const controller = new AbortController();
+    refreshCameras({ signal: controller.signal }).catch(() => {
+      /* error stored in state */
+    });
+    return () => controller.abort();
+  }, [refreshCameras]);
 
-  const upsertCamera = useCallback((input) => {
-    const nextItem = normalizeCameraInput(input);
-    const prev = readList();
-    const exists = prev.some((c) => c.id === nextItem.id);
-    const list = exists
-      ? prev.map((c) => (c.id === nextItem.id ? { ...c, ...nextItem } : c))
-      : [nextItem, ...prev];
-    writeList(list);
-    setCameras(list);
-    return nextItem;
-  }, []);
+  const upsertCamera = useCallback(
+    async (input) => {
+      const nextItem = normalizeCameraInput(input);
+      const saved = nextItem.id
+        ? await updateCamera(nextItem.id, nextItem)
+        : await createCamera(nextItem);
+      await refreshCameras();
+      return saved;
+    },
+    [refreshCameras]
+  );
 
-  const removeCamera = useCallback((id) => {
-    const list = readList().filter((c) => c.id !== id);
-    writeList(list);
-    setCameras(list);
-  }, []);
+  const removeCamera = useCallback(
+    async (id) => {
+      await deleteCamera(id);
+      await refreshCameras();
+    },
+    [refreshCameras]
+  );
 
-  const setEnabled = useCallback((id, enabled) => {
-    const list = readList().map((c) =>
-      c.id === id
-        ? { ...c, enabled: Boolean(enabled), updated_at: new Date().toISOString() }
-        : c
+  const setEnabled = useCallback(
+    async (id, enabled) => {
+      const cam = cameras.find((c) => c.id === id);
+      if (!cam) throw new Error("Camera not found");
+      await updateCamera(id, { ...cam, enabled: Boolean(enabled) });
+      await refreshCameras();
+    },
+    [cameras, refreshCameras]
+  );
+
+  const patchLocalCamera = useCallback((id, patch) => {
+    setCameras((prev) =>
+      prev.map((c) => (c.id === id ? { ...c, ...patch } : c))
     );
-    writeList(list);
-    setCameras(list);
   }, []);
 
   const value = useMemo(
     () => ({
       cameras,
       enabledCameras: cameras.filter((c) => c.enabled),
+      loading,
+      error,
+      refreshCameras,
       upsertCamera,
       removeCamera,
       setEnabled,
+      patchLocalCamera,
     }),
-    [cameras, upsertCamera, removeCamera, setEnabled]
+    [
+      cameras,
+      loading,
+      error,
+      refreshCameras,
+      upsertCamera,
+      removeCamera,
+      setEnabled,
+      patchLocalCamera,
+    ]
   );
 
   return (
@@ -150,9 +166,13 @@ export function useCameraSources() {
     return {
       cameras: [],
       enabledCameras: [],
-      upsertCamera: () => {},
-      removeCamera: () => {},
-      setEnabled: () => {},
+      loading: false,
+      error: null,
+      refreshCameras: async () => [],
+      upsertCamera: async () => {},
+      removeCamera: async () => {},
+      setEnabled: async () => {},
+      patchLocalCamera: () => {},
     };
   }
   return ctx;

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
+  activateDefaultModel,
   activateModel,
   getActiveModel,
   getModels,
@@ -313,6 +314,26 @@ export default function Models() {
     }
   }
 
+  async function handleActivateDefault() {
+    setBusyModelId("DEFAULT");
+    try {
+      const result = await activateDefaultModel();
+      setActive(result);
+      toast.success(
+        result?.message || `Activated · ${result?.name || "Default PPE Model"}`
+      );
+      await refreshModels();
+    } catch (err) {
+      toast.error(err.message || "Could not activate default model");
+    } finally {
+      setBusyModelId(null);
+    }
+  }
+
+  const isDefaultActive =
+    Boolean(active?.active) &&
+    String(active?.id || active?.model_id || "").toUpperCase() === "DEFAULT";
+
   async function handleRename(model) {
     const name = editName.trim();
     if (!name) {
@@ -397,18 +418,45 @@ export default function Models() {
                 ) : null}
               </p>
             </div>
-            <button
-              type="button"
-              onClick={refreshModels}
-              className="rounded-xl border border-line bg-panel px-3 py-2 text-xs font-semibold text-ink hover:bg-panel-hover"
-            >
-              Refresh
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={busyModelId === "DEFAULT" || isDefaultActive}
+                onClick={handleActivateDefault}
+                className="rounded-xl border border-accent bg-accent-soft px-3 py-2 text-xs font-semibold text-accent hover:bg-accent hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {busyModelId === "DEFAULT"
+                  ? "Activating…"
+                  : isDefaultActive
+                    ? "Default active"
+                    : "Use default model"}
+              </button>
+              <button
+                type="button"
+                onClick={refreshModels}
+                className="rounded-xl border border-line bg-panel px-3 py-2 text-xs font-semibold text-ink hover:bg-panel-hover"
+              >
+                Refresh
+              </button>
+            </div>
           </div>
         ) : (
-          <p className="m-0 mt-2 text-sm text-muted">
-            No active model yet. Train a dataset, then activate a model below.
-          </p>
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
+            <p className="m-0 text-sm text-muted">
+              No active model yet. Activate the built-in default, or train a
+              custom model below.
+            </p>
+            <button
+              type="button"
+              disabled={busyModelId === "DEFAULT"}
+              onClick={handleActivateDefault}
+              className="rounded-xl border border-accent bg-accent-soft px-3 py-2 text-xs font-semibold text-accent hover:bg-accent hover:text-white disabled:opacity-60"
+            >
+              {busyModelId === "DEFAULT"
+                ? "Activating…"
+                : "Activate default model"}
+            </button>
+          </div>
         )}
       </section>
 

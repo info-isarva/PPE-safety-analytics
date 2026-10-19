@@ -181,7 +181,7 @@ export default function Overview() {
             <p className="m-0 mt-0.5 text-xs text-muted">
               {activeModel
                 ? `Status: Active · ID ${activeModel.id}`
-                : "Upload a dataset and activate a trained model"}
+                : "Activate the default model or a trained model on Models"}
             </p>
           </div>
           <Link

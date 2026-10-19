@@ -521,8 +521,14 @@
 /* Cameras & sources info banner */
 .cameras-sources-banner {
   position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px 20px;
   overflow: hidden;
   min-height: 92px;
+  padding: 18px 20px;
   border: 1px solid #b9d9ff;
   border-radius: 18px;
   background: linear-gradient(105deg, #f7fbff 0%, #eff7ff 58%, #e5f2ff 100%);
@@ -541,40 +547,65 @@
   pointer-events: none;
 }
 
-.cameras-sources-badge {
-  position: absolute;
-  top: 50%;
-  right: 16px;
+.cameras-sources-actions {
+  position: relative;
   z-index: 3;
-  transform: translateY(-50%);
+  display: flex;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.cameras-sources-badge {
+  display: inline-flex;
+  height: 2rem;
+  align-items: center;
+  white-space: nowrap;
+  border-radius: 999px;
+  border: 1px solid #b7d4f8;
+  background: #fff;
+  padding: 0 14px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #123b66;
+  box-shadow: 0 1px 2px rgba(15, 42, 74, 0.06);
 }
 
 .cameras-sources-content {
   position: relative;
   z-index: 3;
   display: flex;
+  min-width: 0;
+  flex: 1 1 16rem;
   align-items: center;
   gap: 16px;
-  max-width: min(100%, 52rem);
-  padding: 20px 110px 20px 22px;
 }
 
 @media (max-width: 768px) {
-  .cameras-sources-badge {
-    position: static;
-    transform: none;
-    margin-left: auto;
-  }
-
-  .cameras-sources-content {
-    padding: 18px 16px;
-    width: 100%;
-  }
-
   .cameras-sources-banner {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding-right: 12px;
+    padding: 16px;
   }
+
+  .cameras-sources-actions {
+    width: 100%;
+    margin-left: 0;
+  }
+}
+
+html.dark .cameras-sources-banner {
+  border-color: var(--theme-line);
+  background: linear-gradient(
+    105deg,
+    var(--theme-panel) 0%,
+    var(--theme-elevated) 100%
+  );
+  box-shadow: none;
+}
+
+html.dark .cameras-sources-badge {
+  border-color: var(--theme-line);
+  background: var(--theme-panel);
+  color: var(--theme-ink);
 }

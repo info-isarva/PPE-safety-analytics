@@ -138,7 +138,7 @@ export function stopWebcam(jobId) {
   });
 }
 
-/* ---------- RTSP / CCTV live source ---------- */
+/* ---------- RTSP / CCTV live source (legacy job APIs) ---------- */
 
 /** Start RTSP camera processing. */
 export function startRtsp({ rtspUrl, label, transport = "tcp" }) {
@@ -175,36 +175,159 @@ export function stopHttpCamera(jobId) {
   });
 }
 
-/**
- * Start a saved camera registry entry.
- * Returns the backend job payload (job_id, stream_url, ...).
- */
-export async function startSavedCamera(camera) {
-  if (!camera) throw new Error("No camera selected");
-  const type = camera.type;
+/* ---------- Camera management (PostgreSQL registry) ---------- */
 
-  if (type === "webcam") {
-    return startWebcam(camera.camera_index ?? 0);
-  }
-  if (type === "rtsp") {
-    return startRtsp({
-      rtspUrl: camera.url,
-      label: camera.name,
-      transport: camera.transport || "tcp",
-    });
-  }
-  if (type === "http") {
-    return startHttpCamera({ url: camera.url, label: camera.name });
-  }
-  throw new Error(`Unsupported camera type: ${type}`);
+/** Normalize backend camera payloads for UI (`camera_id` → `id`, etc.). */
+export function normalizeCamera(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const id = raw.camera_id ?? raw.id ?? null;
+  if (id == null || id === "") return null;
+  const type = String(raw.source_type ?? raw.type ?? "rtsp").toLowerCase();
+  const source = raw.source ?? raw.url ?? "";
+  const isWebcam = type === "webcam";
+  const cameraIndex = isWebcam
+    ? Math.floor(Number(raw.camera_index ?? source ?? 0)) || 0
+    : null;
+  return {
+    ...raw,
+    id: String(id),
+    camera_id: String(id),
+    name: raw.name ?? "Camera",
+    type,
+    source_type: type,
+    source: String(source ?? ""),
+    url: isWebcam ? "" : String(source ?? ""),
+    camera_index: cameraIndex,
+    enabled: raw.enabled !== false,
+    status: raw.status || "not_connected",
+    transport: raw.transport === "udp" ? "udp" : "tcp",
+    notes: String(raw.notes || ""),
+    job_id: raw.job_id ?? null,
+    stream_url: raw.stream_url ?? null,
+  };
 }
 
-/** Stop by source type when known; falls back to generic job stop. */
-export async function stopLiveSource(jobId, sourceType) {
+function normalizeCameraList(payload) {
+  const list = Array.isArray(payload)
+    ? payload
+    : Array.isArray(payload?.cameras)
+      ? payload.cameras
+      : Array.isArray(payload?.items)
+        ? payload.items
+        : Array.isArray(payload?.data)
+          ? payload.data
+          : [];
+  return list.map(normalizeCamera).filter(Boolean);
+}
+
+/** Map UI form fields → POST/PUT /cameras body. */
+export function toCameraApiPayload(input) {
+  const type = String(input.type || input.source_type || "rtsp").toLowerCase();
+  let source = "";
+  if (type === "webcam") {
+    source = String(input.camera_index ?? input.source ?? 0);
+  } else {
+    source = String(input.url || input.source || "").trim();
+  }
+  return {
+    name: String(input.name || "").trim(),
+    source_type: type,
+    source,
+    enabled: input.enabled !== false,
+  };
+}
+
+export async function getCameras({ signal } = {}) {
+  const payload = await apiFetch("/cameras", { signal });
+  return normalizeCameraList(payload);
+}
+
+export async function getCamera(cameraId) {
+  const id = encodeURIComponent(String(cameraId));
+  const payload = await apiFetch(`/cameras/${id}`);
+  return normalizeCamera(payload);
+}
+
+export async function createCamera(input) {
+  const payload = await apiFetch("/cameras", {
+    method: "POST",
+    json: toCameraApiPayload(input),
+  });
+  return normalizeCamera(payload);
+}
+
+export async function updateCamera(cameraId, input) {
+  if (cameraId == null || cameraId === "") {
+    return Promise.reject(new Error("Missing camera id"));
+  }
+  const id = encodeURIComponent(String(cameraId));
+  const payload = await apiFetch(`/cameras/${id}`, {
+    method: "PUT",
+    json: toCameraApiPayload(input),
+  });
+  return normalizeCamera(payload);
+}
+
+export function deleteCamera(cameraId) {
+  if (cameraId == null || cameraId === "") {
+    return Promise.reject(new Error("Missing camera id"));
+  }
+  const id = encodeURIComponent(String(cameraId));
+  return apiFetch(`/cameras/${id}`, { method: "DELETE" });
+}
+
+/** Test whether the configured camera can be reached. */
+export function testCamera(cameraId) {
+  if (cameraId == null || cameraId === "") {
+    return Promise.reject(new Error("Missing camera id"));
+  }
+  const id = encodeURIComponent(String(cameraId));
+  return apiFetch(`/cameras/${id}/test`, { method: "POST" });
+}
+
+/** Start AI processing for a registered camera; returns stream_url. */
+export function startCamera(cameraId) {
+  if (cameraId == null || cameraId === "") {
+    return Promise.reject(new Error("Missing camera id"));
+  }
+  const id = encodeURIComponent(String(cameraId));
+  return apiFetch(`/cameras/${id}/start`, { method: "POST" });
+}
+
+/** Stop processing for a registered camera. */
+export function stopCamera(cameraId) {
+  if (cameraId == null || cameraId === "") {
+    return Promise.reject(new Error("Missing camera id"));
+  }
+  const id = encodeURIComponent(String(cameraId));
+  return apiFetch(`/cameras/${id}/stop`, { method: "POST" });
+}
+
+/**
+ * Start a saved camera via Camera Management API.
+ * Returns job payload including stream_url for Live View.
+ */
+export async function startSavedCamera(camera) {
+  const id = camera?.id ?? camera?.camera_id;
+  if (!id) throw new Error("No camera selected");
+  return startCamera(id);
+}
+
+/**
+ * Stop a live source.
+ * Prefer Camera Management stop; fall back to generic job stop.
+ * Do not use /video/rtsp|webcam|http/{id}/stop — those routes 404 on current backend.
+ */
+export async function stopLiveSource(jobId, _sourceType, cameraId) {
+  if (cameraId) {
+    try {
+      return await stopCamera(cameraId);
+    } catch (err) {
+      // If camera stop is unavailable, fall through to job stop when we have a job id.
+      if (!jobId || (err?.status !== 404 && err?.status !== 405)) throw err;
+    }
+  }
   if (!jobId) throw new Error("Missing job id");
-  if (sourceType === "webcam") return stopWebcam(jobId);
-  if (sourceType === "rtsp") return stopRtsp(jobId);
-  if (sourceType === "http") return stopHttpCamera(jobId);
   return stopVideoJob(jobId);
 }
 
@@ -352,6 +475,23 @@ export function activateModel(modelId) {
     `/models/${encodeURIComponent(String(modelId))}/activate`,
     { method: "POST" }
   ).then(normalizeModel);
+}
+
+/**
+ * Activate the built-in default PPE model (models/best.pt).
+ * Deactivates all custom-trained models on the backend.
+ */
+export async function activateDefaultModel() {
+  const payload = await apiFetch("/models/activate-default", {
+    method: "POST",
+  });
+  return normalizeModel({
+    ...payload,
+    id: payload?.model_id ?? payload?.id ?? "DEFAULT",
+    model_id: payload?.model_id ?? payload?.id ?? "DEFAULT",
+    active: payload?.active !== false,
+    name: payload?.name || "Default PPE Model (10 classes)",
+  });
 }
 
 export { API_BASE_URL };

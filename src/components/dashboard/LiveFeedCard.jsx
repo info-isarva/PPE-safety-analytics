@@ -46,7 +46,12 @@ function statusTone(status) {
 
 export function LiveFeedCard({ compact = false }) {
   const toast = useToast();
-  const { enabledCameras } = useCameraSources();
+  const {
+    cameras,
+    enabledCameras,
+    loading: camerasLoading,
+    refreshCameras,
+  } = useCameraSources();
   const fileInputRef = useRef(null);
   const mediaRef = useRef(null);
   const stageRef = useRef(null);
@@ -59,6 +64,7 @@ export function LiveFeedCard({ compact = false }) {
   const [startingWebcam, setStartingWebcam] = useState(false);
   const [startingSaved, setStartingSaved] = useState(false);
   const [selectedCameraId, setSelectedCameraId] = useState("");
+  const [activeCameraId, setActiveCameraId] = useState(null);
   const [stopping, setStopping] = useState(false);
   const [error, setError] = useState(null);
   const [streamError, setStreamError] = useState(false);
@@ -87,11 +93,13 @@ export function LiveFeedCard({ compact = false }) {
   const isWebcam = sourceType === "webcam";
   const isRtsp = sourceType === "rtsp";
   const isHttp = sourceType === "http";
+  const isCameraJob = Boolean(activeCameraId) || isRtsp || isHttp || isWebcam;
   const tone = statusTone(status);
   const canStop =
-    Boolean(jobId) &&
+    (Boolean(jobId) || Boolean(activeCameraId)) &&
     (status === "queued" ||
       status === "processing" ||
+      status === "starting" ||
       status === "stopping");
   const busy = uploading || startingWebcam || startingSaved;
 
@@ -129,13 +137,16 @@ export function LiveFeedCard({ compact = false }) {
     };
   }, [refreshHistory]);
 
-  const activateJob = useCallback((data, filename) => {
+  const activateJob = useCallback((data, filename, cameraId = null) => {
     const id = data.job_id;
-    const name = data.filename || filename || null;
-    setJobId(id);
+    const name = data.filename || data.camera_name || filename || null;
+    setJobId(id || null);
     setJob(data);
     setLabel(name);
-    setStreamUrl(getJobStreamUrl(data.stream_url || id));
+    setActiveCameraId(cameraId || data.camera_id || null);
+    setStreamUrl(
+      data.stream_url || id ? getJobStreamUrl(data.stream_url || id) : null
+    );
     setProcessedUrl(resolveProcessedVideoUrl(data));
     setProcessedOk(false);
     setStreamError(false);
@@ -144,17 +155,19 @@ export function LiveFeedCard({ compact = false }) {
     setDraftPoints([]);
     setSavedPoints([]);
     setDrawing(false);
-    setHistory((prev) =>
-      upsertJobInList(prev, {
-        job_id: id,
-        filename: name,
-        status: data.status,
-        progress: data.progress,
-        source_type: data.source_type,
-        stream_url: data.stream_url,
-        started_at: data.started_at,
-      })
-    );
+    if (id) {
+      setHistory((prev) =>
+        upsertJobInList(prev, {
+          job_id: id,
+          filename: name,
+          status: data.status,
+          progress: data.progress,
+          source_type: data.source_type,
+          stream_url: data.stream_url,
+          started_at: data.started_at,
+        })
+      );
+    }
   }, []);
 
   useEffect(() => {
@@ -170,8 +183,10 @@ export function LiveFeedCard({ compact = false }) {
             source_type: live.source_type,
             filename: live.label,
             stream_url: live.stream_url,
+            camera_id: live.camera_id || null,
           },
-          live.label
+          live.label,
+          live.camera_id || null
         );
       } catch {
         /* idle */
@@ -192,7 +207,10 @@ export function LiveFeedCard({ compact = false }) {
         const data = await getVideoJob(jobId);
         if (cancelled) return;
         setJob(data);
-        setLabel((prev) => data.filename || prev);
+        setLabel((prev) => data.filename || data.camera_name || prev);
+        if (data.camera_id) {
+          setActiveCameraId((prev) => prev || String(data.camera_id));
+        }
         setProcessedUrl(resolveProcessedVideoUrl(data));
         if (data.stream_url) {
           const next = getJobStreamUrl(data.stream_url);
@@ -383,7 +401,7 @@ export function LiveFeedCard({ compact = false }) {
 
     try {
       const result = await startWebcam(0);
-      activateJob(result, result.filename || "Webcam 0");
+      activateJob(result, result.filename || "Webcam 0", null);
       toast.success(result.message || "Webcam started");
       refreshHistory();
     } catch (err) {
@@ -411,16 +429,28 @@ export function LiveFeedCard({ compact = false }) {
 
     try {
       const result = await startSavedCamera(camera);
+      if (!result?.stream_url && !result?.job_id) {
+        throw new Error("Camera started but no stream_url was returned");
+      }
       activateJob(
-        { ...result, source_type: result.source_type || camera.type },
-        result.filename || camera.name
+        {
+          ...result,
+          source_type: result.source_type || camera.type,
+          filename: result.camera_name || camera.name,
+          status: result.status || "starting",
+        },
+        result.camera_name || camera.name,
+        camera.id
       );
-      toast.success(result.message || `Started ${camera.name}`);
+      toast.success(
+        result.message || `Started ${result.camera_name || camera.name}`
+      );
       refreshHistory();
+      refreshCameras().catch(() => {});
     } catch (err) {
       const msg =
         err.message ||
-        `Could not start ${camera.name}. Backend may not support ${camera.type} yet.`;
+        `Could not start ${camera.name}. Check camera status on the Cameras page.`;
       setError(msg);
       toast.error(msg);
     } finally {
@@ -575,24 +605,50 @@ export function LiveFeedCard({ compact = false }) {
     }
   }
 
+  function resolveCameraIdForStop() {
+    if (activeCameraId) return activeCameraId;
+    if (job?.camera_id) return String(job.camera_id);
+    if (!jobId) return null;
+    const byJob = cameras.find((c) => c.job_id && c.job_id === jobId);
+    if (byJob?.id) return byJob.id;
+    const labelName = String(label || job?.filename || job?.camera_name || "")
+      .trim()
+      .toLowerCase();
+    if (labelName) {
+      const byName = cameras.find(
+        (c) => String(c.name || "").trim().toLowerCase() === labelName
+      );
+      if (byName?.id) return byName.id;
+    }
+    return null;
+  }
+
   async function handleStop() {
-    if (!jobId || !canStop) return;
+    if (!canStop) return;
     setStopping(true);
     try {
-      const result = await stopLiveSource(jobId, sourceType);
+      const cameraId = resolveCameraIdForStop();
+      if (cameraId && cameraId !== activeCameraId) {
+        setActiveCameraId(cameraId);
+      }
+      const result = await stopLiveSource(jobId, sourceType, cameraId);
       const nextStatus =
         result.status ||
-        (isWebcam || isRtsp || isHttp ? "stopping" : "cancelled");
-      setJob((prev) => ({ ...prev, ...result, status: nextStatus }));
-      setHistory((prev) =>
-        patchJobInList(prev, jobId, { status: nextStatus })
-      );
+        (isCameraJob || cameraId ? "stopping" : "cancelled");
+      setJob((prev) => ({ ...(prev || {}), ...result, status: nextStatus }));
+      if (jobId) {
+        setHistory((prev) =>
+          patchJobInList(prev, jobId, { status: nextStatus })
+        );
+      }
       toast.info(
-        isWebcam || isRtsp || isHttp
-          ? "Live source stop requested."
-          : "Processing stopped."
+        result?.message ||
+          (cameraId || isCameraJob
+            ? "Camera stop requested."
+            : "Processing stopped.")
       );
       refreshHistory();
+      refreshCameras().catch(() => {});
     } catch (err) {
       toast.error(err.message || "Could not stop job");
     } finally {
@@ -604,7 +660,14 @@ export function LiveFeedCard({ compact = false }) {
     if (!entry?.job_id || busy) return;
     try {
       const data = await getVideoJob(entry.job_id);
-      activateJob(data, entry.filename);
+      const matched = cameras.find(
+        (c) => c.job_id === entry.job_id || c.job_id === data.job_id
+      );
+      activateJob(
+        data,
+        entry.filename,
+        data.camera_id || matched?.id || null
+      );
       toast.info(`Opened ${data.filename || entry.filename}`);
     } catch (err) {
       toast.error(err.message || "Could not open job");
@@ -644,7 +707,7 @@ export function LiveFeedCard({ compact = false }) {
               status={status}
               tone={tone}
               progress={progress}
-              isLiveSource={isWebcam || isRtsp || isHttp}
+              isLiveSource={isCameraJob}
               sourceType={sourceType}
             />
             <input
@@ -696,19 +759,22 @@ export function LiveFeedCard({ compact = false }) {
             className="min-w-[10rem] flex-1 rounded-xl border border-line bg-elevated px-2.5 py-1.5 text-xs font-medium text-ink outline-none focus:border-accent disabled:opacity-60 sm:flex-none sm:min-w-[14rem]"
           >
             <option value="">
-              {enabledCameras.length
-                ? "Select camera…"
-                : "No enabled cameras"}
+              {camerasLoading
+                ? "Loading cameras…"
+                : enabledCameras.length
+                  ? "Select camera…"
+                  : "No enabled cameras"}
             </option>
             {enabledCameras.map((cam) => (
               <option key={cam.id} value={cam.id}>
-                {cam.name} ({cam.type})
+                {cam.name} ({cam.type}
+                {cam.status ? ` · ${cam.status}` : ""})
               </option>
             ))}
           </select>
           <button
             type="button"
-            disabled={busy || !selectedCameraId}
+            disabled={busy || !selectedCameraId || camerasLoading}
             onClick={handleStartSavedCamera}
             className="inline-flex cursor-pointer items-center rounded-xl bg-accent px-3 py-1.5 text-xs font-semibold text-white hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
           >
