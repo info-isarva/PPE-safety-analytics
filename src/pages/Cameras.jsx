@@ -1,7 +1,10 @@
 import { useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
+  normalizeCameraBatchResult,
+  startAllCameras,
   startCamera,
+  stopAllCameras,
   stopCamera,
   testCamera,
 } from "../api/endpoints";
@@ -205,7 +208,93 @@ export default function Cameras() {
   const [testingId, setTestingId] = useState(null);
   const [actionId, setActionId] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [batchBusy, setBatchBusy] = useState(false);
+  const [batchSummary, setBatchSummary] = useState(null);
   const formRef = useRef(null);
+
+  function applyBatchResults(results) {
+    const list = Array.isArray(results) ? results : [];
+    for (const raw of list) {
+      const row = normalizeCameraBatchResult(raw);
+      if (!row?.camera_id) continue;
+      const patch = { status: row.status || undefined };
+      if (row.job_id != null) patch.job_id = row.job_id;
+      if (row.stream_url != null) patch.stream_url = row.stream_url;
+      if (
+        row.status === "stopping" ||
+        row.status === "idle" ||
+        row.status === "already_stopped"
+      ) {
+        if (!row.stream_url) patch.stream_url = null;
+        if (row.status !== "stopping") patch.job_id = row.job_id || null;
+      }
+      patchLocalCamera(row.camera_id, patch);
+    }
+  }
+
+  async function handleStartAll() {
+    setBatchBusy(true);
+    setBatchSummary(null);
+    try {
+      const data = await startAllCameras();
+      applyBatchResults(data?.results);
+      setBatchSummary({
+        kind: "start",
+        started: Number(data?.started ?? 0),
+        already_running: Number(data?.already_running ?? 0),
+        skipped: Number(data?.skipped ?? 0),
+        failed: Number(data?.failed ?? 0),
+        results: (Array.isArray(data?.results) ? data.results : []).map(
+          normalizeCameraBatchResult
+        ),
+      });
+      const started = Number(data?.started ?? 0);
+      const failed = Number(data?.failed ?? 0);
+      if (failed && !started) {
+        toast.error(
+          `Start all finished with ${failed} failed · ${data?.skipped ?? 0} skipped`
+        );
+      } else {
+        toast.success(
+          `Start all · ${started} starting · ${data?.already_running ?? 0} already running · ${data?.skipped ?? 0} skipped · ${failed} failed`
+        );
+      }
+      await refreshCameras().catch(() => {});
+    } catch (err) {
+      toast.error(err.message || "Could not start all cameras");
+    } finally {
+      setBatchBusy(false);
+    }
+  }
+
+  async function handleStopAll() {
+    setBatchBusy(true);
+    setBatchSummary(null);
+    try {
+      const data = await stopAllCameras();
+      applyBatchResults(data?.results);
+      setBatchSummary({
+        kind: "stop",
+        status: data?.status || "stopping",
+        requested: Number(data?.requested ?? 0),
+        already_stopped: Number(data?.already_stopped ?? 0),
+        failed: Number(data?.failed ?? 0),
+        results: (Array.isArray(data?.results) ? data.results : []).map(
+          normalizeCameraBatchResult
+        ),
+      });
+      toast.info(
+        data?.status === "already_stopped"
+          ? "All cameras already stopped"
+          : `Stop all · ${data?.requested ?? 0} requested · ${data?.already_stopped ?? 0} already stopped · ${data?.failed ?? 0} failed`
+      );
+      await refreshCameras().catch(() => {});
+    } catch (err) {
+      toast.error(err.message || "Could not stop all cameras");
+    } finally {
+      setBatchBusy(false);
+    }
+  }
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -467,6 +556,22 @@ export default function Cameras() {
         <div className="cameras-sources-actions">
           <button
             type="button"
+            disabled={batchBusy || loading}
+            onClick={handleStartAll}
+            className="inline-flex h-8 items-center rounded-full bg-accent px-3.5 text-xs font-bold text-white shadow-sm hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {batchBusy ? "Working…" : "Start all"}
+          </button>
+          <button
+            type="button"
+            disabled={batchBusy || loading}
+            onClick={handleStopAll}
+            className="inline-flex h-8 items-center rounded-full border border-danger/40 bg-danger-soft px-3.5 text-xs font-bold text-danger hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            Stop all
+          </button>
+          <button
+            type="button"
             onClick={() => {
               refreshCameras().catch((err) =>
                 toast.error(err.message || "Could not refresh cameras")
@@ -482,6 +587,47 @@ export default function Cameras() {
           </span>
         </div>
       </section>
+
+      {batchSummary ? (
+        <section className="rounded-xl border border-line bg-panel px-4 py-3 text-sm shadow-sm">
+          <p className="m-0 font-semibold text-ink">
+            {batchSummary.kind === "start" ? "Start all result" : "Stop all result"}
+          </p>
+          <p className="m-0 mt-1 text-xs text-muted">
+            {batchSummary.kind === "start"
+              ? `${batchSummary.started} starting · ${batchSummary.already_running} already running · ${batchSummary.skipped} skipped · ${batchSummary.failed} failed`
+              : `Status ${batchSummary.status} · ${batchSummary.requested} requested · ${batchSummary.already_stopped} already stopped · ${batchSummary.failed} failed`}
+          </p>
+          {batchSummary.results?.length ? (
+            <ul className="m-0 mt-2 list-none space-y-1 p-0">
+              {batchSummary.results.filter(Boolean).map((row) => (
+                <li
+                  key={`${row.camera_id}-${row.job_id || row.status}`}
+                  className="text-xs text-muted"
+                >
+                  <span className="font-semibold text-ink">
+                    {row.camera_name || row.camera_id}
+                  </span>
+                  {" · "}
+                  {row.status || "unknown"}
+                  {row.message ? ` — ${row.message}` : ""}
+                  {row.stream_url ? (
+                    <>
+                      {" · "}
+                      <Link
+                        to="/live"
+                        className="font-semibold text-accent hover:underline"
+                      >
+                        Open in Live
+                      </Link>
+                    </>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </section>
+      ) : null}
 
       {loadError ? (
         <p className="m-0 rounded-xl bg-danger-soft px-3 py-2 text-sm text-danger">

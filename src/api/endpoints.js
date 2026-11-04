@@ -304,6 +304,35 @@ export function stopCamera(cameraId) {
 }
 
 /**
+ * Start all enabled RTSP cameras.
+ * Each results[] item may include stream_url for that camera's live feed.
+ */
+export function startAllCameras() {
+  return apiFetch("/cameras/start-all", { method: "POST" });
+}
+
+/** Request stop for all camera jobs. */
+export function stopAllCameras() {
+  return apiFetch("/cameras/stop-all", { method: "POST" });
+}
+
+/** Normalize start-all / stop-all per-camera rows for the UI. */
+export function normalizeCameraBatchResult(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const cameraId = raw.camera_id ?? raw.id ?? null;
+  return {
+    ...raw,
+    camera_id: cameraId != null ? String(cameraId) : null,
+    job_id: raw.job_id ?? null,
+    status: raw.status || null,
+    camera_name: raw.camera_name || raw.name || null,
+    source_type: raw.source_type || raw.type || null,
+    stream_url: raw.stream_url || null,
+    message: raw.message || raw.error || null,
+  };
+}
+
+/**
  * Start a saved camera via Camera Management API.
  * Returns job payload including stream_url for Live View.
  */
