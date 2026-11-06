@@ -18,6 +18,9 @@
   "dependencies": {
     "@tailwindcss/vite": "^4.3.3",
     "date-fns": "^4.4.0",
+    "exceljs": "^4.4.0",
+    "jspdf": "^4.2.1",
+    "jspdf-autotable": "^5.0.9",
     "react": "^19.2.8",
     "react-datepicker": "^9.1.0",
     "react-dom": "^19.2.8",
