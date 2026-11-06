@@ -33,7 +33,7 @@ const PAGE_META = {
     title: "Models",
     subtitle: "Dataset upload · train · activate",
   },
-  "/reports": { title: "Reports", subtitle: "Coming in Phase 14" },
+  "/reports": { title: "Reports", subtitle: "Overview · PPE · workers · zones · export" },
   "/settings": { title: "Settings", subtitle: "Brand · preferences" },
 };
 
@@ -411,7 +411,7 @@ export function AppShell() {
         />
       ) : null}
 
-      <div className={`flex min-h-dvh min-w-0 flex-col transition-[margin] duration-300 ${mainOffset}`}>
+      <div className={`flex h-dvh min-h-0 min-w-0 flex-col overflow-hidden transition-[margin] duration-300 ${mainOffset}`}>
         <header className="nethra-header sticky top-0 z-20 flex h-[68px] items-center gap-3 px-3 sm:gap-4 sm:px-5">
           <button
             type="button"
@@ -483,18 +483,21 @@ export function AppShell() {
           </div>
         </header>
 
-        <main className="flex-1 overflow-auto p-4 sm:p-6 lg:p-7">
-          <div key={location.pathname} className="animate-fade-up h-full">
+        <main className="flex min-h-0 flex-1 flex-col overflow-auto p-4 sm:p-6 lg:p-7">
+          <div key={location.pathname} className="animate-fade-up flex min-h-full flex-1 flex-col">
             {location.pathname === "/cameras" ||
-            location.pathname === "/models" ? null : (
-              <div className="mb-4 hidden sm:block">
+            location.pathname === "/models" ||
+            location.pathname === "/reports" ? null : (
+              <div className="mb-4 hidden shrink-0 sm:block">
                 <p className="m-0 text-xl font-bold text-ink">{page.title}</p>
                 {page.subtitle ? (
                   <p className="m-0 mt-0.5 text-sm text-muted">{page.subtitle}</p>
                 ) : null}
               </div>
             )}
-            <Outlet />
+            <div className="flex min-h-0 flex-1 flex-col">
+              <Outlet />
+            </div>
           </div>
         </main>
       </div>

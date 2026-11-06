@@ -4,8 +4,87 @@ export function getHealth() {
   return apiFetch("/health");
 }
 
-export function getDashboardStats() {
-  return apiFetch("/stats/dashboard");
+function isoDate(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+/** Date-filter report routes. POST JSON. Trend is handled separately and does not take dates. */
+const POST_DATE_STATS = new Set([
+  "/stats/violations/by-class",
+  "/stats/violations/by-camera",
+  "/stats/events/by-type",
+  "/stats/events/daily",
+  "/stats/events/hourly",
+  "/stats/events/restricted-zone/daily",
+  "/stats/workers/compliance",
+  "/stats/workers/repeat-persons",
+  "/stats/violations/restricted-zone/by-camera",
+  "/stats/violations/restricted-zone/by-ppe",
+]);
+
+function statsBody(params = {}) {
+  const end = new Date();
+  const start = new Date();
+  start.setDate(end.getDate() - 6);
+  const body = {};
+  for (const [key, value] of Object.entries(params)) {
+    if (value != null && value !== "") body[key] = value;
+  }
+  if (!body.start_date) body.start_date = isoDate(start);
+  if (!body.end_date) body.end_date = isoDate(end);
+  return body;
+}
+
+function withQuery(path, params = {}) {
+  const query = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value != null && value !== "") query.set(key, String(value));
+  });
+  const text = query.toString();
+  return text ? `${path}?${text}` : path;
+}
+
+export function getDashboardStats({ signal, ...params } = {}) {
+  return apiFetch(withQuery("/stats/dashboard", params), { signal });
+}
+
+/** Report call. The date-filter routes use POST JSON. Trend sends days, not dates. */
+export function getReportStats(path, params = {}, { signal } = {}) {
+  if (path === "/stats/events/trend") {
+    const body = { days: Number(params.days) === 90 ? 90 : Number(params.days) === 30 ? 30 : 7 };
+    if (params.camera_id) body.camera_id = params.camera_id;
+    return apiFetch(path, { method: "POST", json: body, signal });
+  }
+  if (POST_DATE_STATS.has(path)) {
+    return apiFetch(path, { method: "POST", json: statsBody(params), signal });
+  }
+  return apiFetch(withQuery(path, params), { signal });
+}
+
+/** Download filtered events with POST /events/export/csv. The response is a CSV file. */
+export async function downloadEventsCsv(params = {}) {
+  const response = await fetch(`${API_BASE_URL}/events/export/csv`, {
+    method: "POST",
+    headers: {
+      "ngrok-skip-browser-warning": "true",
+      "Content-Type": "application/json",
+      Accept: "text/csv, application/json",
+    },
+    body: JSON.stringify(statsBody(params)),
+  });
+  if (!response.ok) {
+    throw new Error(`Export failed (${response.status})`);
+  }
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = objectUrl;
+  link.download = "incident_report.csv";
+  link.click();
+  URL.revokeObjectURL(objectUrl);
 }
 
 export function getComplianceStats() {
@@ -24,8 +103,8 @@ export function getPpeDistributionStats() {
   return apiFetch("/stats/ppe-distribution");
 }
 
-export function getEvents() {
-  return apiFetch("/events");
+export function getEvents({ signal } = {}) {
+  return apiFetch("/events", { signal });
 }
 
 export function getEvent(eventId) {
