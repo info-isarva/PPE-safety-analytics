@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 const RANGES = [
   { id: "today", label: "Today" },
@@ -36,7 +36,7 @@ const BLURBS = {
   "zone-camera": "Restricted-zone events grouped by camera.",
   "zone-ppe": "Restricted-zone events grouped by PPE class.",
   "zone-daily": "Restricted-zone events for each day.",
-  export: "Download filtered events as a CSV file.",
+  export: "Download the filtered events as Excel, PDF, or CSV.",
 };
 
 export function formatCell(value, column) {
@@ -73,7 +73,7 @@ export function downloadCsv(filename, headers, rows) {
   URL.revokeObjectURL(url);
 }
 
-function prettyKey(key) {
+export function prettyKey(key) {
   return String(key || "")
     .replaceAll("_", " ")
     .replace(/\b\w/g, (char) => char.toUpperCase());
@@ -138,7 +138,137 @@ function changeClass(label, direction) {
   return good ? "text-[#16a34a]" : "text-[#dc2626]";
 }
 
-export function ReportPageHeader({ report, favorited, onFavorite, onExport, exporting }) {
+export function buildReportSheet({
+  report,
+  category,
+  table,
+  previousTable,
+  tableQuery,
+  subtitle,
+}) {
+  const summary = table.columns.includes("metric") && table.rows.some((row) => row.key);
+  const previousMap = new Map();
+  for (const row of previousTable?.rows || []) {
+    if (row.key) previousMap.set(row.key, row.raw);
+  }
+  const query = String(tableQuery || "").trim().toLowerCase();
+  const columns = table.columns.filter((column) => !["key", "raw", "points"].includes(column));
+  const rows = table.rows.filter((row) => {
+    if (!query) return true;
+    return table.columns.some((column) =>
+      formatCell(row[column], column).toLowerCase().includes(query)
+    );
+  });
+  if (summary) rows.sort((a, b) => rank(a.metric) - rank(b.metric));
+
+  const headers = ["#", ...columns.map((column) => prettyKey(column))];
+  if (summary) headers.push("Change (vs. previous period)");
+  const body = rows.map((row, index) => {
+    const cells = [index + 1];
+    for (const column of columns) cells.push(exportCell(row, column));
+    if (summary) cells.push(describeChange(row, previousMap)?.text || "");
+    return cells;
+  });
+  return {
+    filename: fileSlug(report.name),
+    title: report.name,
+    subtitle: [category, subtitle].filter(Boolean).join(" · "),
+    headers,
+    rows: body,
+  };
+}
+
+function exportCell(row, column) {
+  if (column === "value" && Number.isFinite(row.raw)) {
+    if (row.points) {
+      const text = formatCell(row.value, column);
+      return text === "—" ? "" : text;
+    }
+    return row.raw;
+  }
+  const value = row[column];
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  const text = formatCell(value, column);
+  return text === "—" ? "" : text;
+}
+
+export function fileSlug(name) {
+  const slug = String(name || "report")
+    .trim()
+    .replace(/[^\w\- ]+/g, "")
+    .replace(/\s+/g, "_");
+  return slug || "report";
+}
+
+const EXPORT_OPTIONS = [
+  { id: "excel", label: "Excel (.xlsx)" },
+  { id: "pdf", label: "PDF" },
+  { id: "csv", label: "CSV" },
+];
+
+export function ReportExportButtons({ busy, disabled, onExport, compact = false }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef(null);
+  const height = compact ? "h-8" : "h-9";
+  const text = compact ? "text-xs" : "text-sm";
+  const pad = compact ? "px-2.5" : "px-3";
+
+  useEffect(() => {
+    if (!open) return undefined;
+    function onPointer(event) {
+      if (!rootRef.current?.contains(event.target)) setOpen(false);
+    }
+    function onKey(event) {
+      if (event.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        type="button"
+        disabled={disabled || Boolean(busy)}
+        aria-expanded={open}
+        aria-haspopup="menu"
+        onClick={() => setOpen((value) => !value)}
+        className={`inline-flex ${height} items-center gap-1.5 rounded-lg border border-accent bg-accent ${pad} ${text} font-semibold text-white shadow-[0_1px_2px_rgba(22,119,232,0.25)] hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50`}
+      >
+        <DownloadIcon />
+        {busy ? "Exporting…" : "Export"}
+        <ChevronIcon open={open} />
+      </button>
+      {open ? (
+        <div
+          role="menu"
+          className="absolute right-0 z-20 mt-1 w-40 overflow-hidden rounded-lg border border-line bg-panel py-1 shadow-lg"
+        >
+          {EXPORT_OPTIONS.map((option) => (
+            <button
+              key={option.id}
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                onExport(option.id);
+              }}
+              className="flex h-9 w-full items-center px-3 text-left text-sm font-semibold text-ink hover:bg-accent-soft hover:text-accent"
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+export function ReportPageHeader({ report, favorited, onFavorite, onExport, exporting, exportDisabled }) {
   return (
     <header className="flex flex-wrap items-center justify-between gap-3">
       <div className="flex min-w-0 items-center gap-3">
@@ -170,15 +300,11 @@ export function ReportPageHeader({ report, favorited, onFavorite, onExport, expo
           <StarIcon filled={favorited} className="text-accent" />
           Add to Favorites
         </button>
-        <button
-          type="button"
-          onClick={onExport}
-          disabled={exporting}
-          className="inline-flex h-9 items-center gap-2 rounded-lg border border-line bg-panel px-3 text-sm font-semibold text-ink disabled:opacity-60"
-        >
-          <DownloadIcon />
-          {exporting ? "Exporting…" : "Export"}
-        </button>
+        <ReportExportButtons
+          busy={exporting}
+          disabled={exportDisabled}
+          onExport={onExport}
+        />
       </div>
     </header>
   );
@@ -376,6 +502,7 @@ export function ReportDetail({
   onRetry,
   onExport,
   exporting,
+  exportDisabled,
   page,
   pageSize,
   onPage,
@@ -588,16 +715,21 @@ export function ReportDetail({
               {summary || report.kind === "dashboard" ? "Metrics summary" : "Report data"}
             </h3>
           </div>
-          {report.kind === "export" ? null : (
+          {report.kind === "export" ? (
+            <ReportExportButtons
+              compact
+              busy={exporting}
+              disabled={exportDisabled}
+              onExport={onExport}
+            />
+          ) : (
             <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={onExport}
-                className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-line px-2.5 text-xs font-semibold text-ink"
-              >
-                <DownloadIcon />
-                Export
-              </button>
+              <ReportExportButtons
+                compact
+                busy={exporting}
+                disabled={exportDisabled}
+                onExport={onExport}
+              />
               {summary ? (
                 <div className="relative">
                   <button
@@ -636,8 +768,9 @@ export function ReportDetail({
 
         {report.kind === "export" ? (
           <p className="m-0 px-4 py-6 text-sm text-muted">
-            Set this report’s filters, then use Export. The file uses this report’s
-            date range, camera, event type, and violation.
+            Set this report’s filters, then choose Excel, PDF, or CSV. The file uses
+            this report’s date range, camera, event type, and violation. Columns are
+            Id, Event type, Person id, Camera id, Violation, Timestamp, and Screenshot url.
           </p>
         ) : (
           <>
@@ -1034,6 +1167,21 @@ function FilterIcon() {
   return (
     <svg className="h-4 w-4 text-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
       <path d="M4 6h16l-6 7v5l-4 2v-7L4 6Z" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function ChevronIcon({ open }) {
+  return (
+    <svg
+      className={`h-3.5 w-3.5 transition-transform ${open ? "rotate-180" : ""}`}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      aria-hidden="true"
+    >
+      <path d="m6 9 6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }

@@ -1,18 +1,20 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  downloadEventsCsv,
+  fetchEventsCsv,
   getCameras,
   getReportStats,
 } from "../api/endpoints";
 import { useToast } from "../components/common/ToastContext";
 import {
+  buildReportSheet,
   downloadCsv,
-  formatCell,
+  fileSlug,
   ReportCatalog,
   ReportDetail,
   ReportPageHeader,
   ReportSidebar,
 } from "./reportChrome";
+import { downloadExcelReport, downloadPdfReport, sheetFromCsv } from "./reportExport";
 
 const FAVORITES_KEY = "ppe-report-favorites";
 const VISITS_KEY = "ppe-report-visits";
@@ -51,7 +53,7 @@ const BLURBS = {
   "zone-camera": "Restricted-zone events grouped by camera.",
   "zone-ppe": "Restricted-zone events grouped by PPE class.",
   "zone-daily": "Restricted-zone events for each day.",
-  export: "Download filtered events as a CSV file.",
+  export: "Download the filtered events as Excel, PDF, or CSV.",
 };
 
 const METRIC_ORDER = [
@@ -730,10 +732,42 @@ export default function Reports() {
     setPage(1);
   }
 
-  async function exportCurrent() {
-    setExporting(true);
-    try {
-      await downloadEventsCsv(
+  function exportSubtitle() {
+    if (!openReport) return heading;
+    const parts = [];
+    if (openReport.filters?.includes("days")) {
+      parts.push(range === "90d" ? "Last 90 days" : range === "30d" ? "Last 30 days" : "Last 7 days");
+    } else if (openReport.filters?.includes("start_date")) {
+      parts.push(`${formatDay(startDate)} – ${formatDay(endDate)}`);
+    }
+    if (openReport.filters?.includes("camera_id")) {
+      const camera = cameras.find((item) => item.id === cameraId);
+      parts.push(cameraId ? camera?.name || `Camera ${cameraId}` : "All cameras");
+    }
+    if (eventType) parts.push(`Event type: ${eventType}`);
+    if (violation) parts.push(`Violation: ${violation}`);
+    if (tableQuery.trim()) parts.push(`Search: ${tableQuery.trim()}`);
+    parts.push(`Generated ${new Date().toLocaleString()}`);
+    return parts.join(" · ");
+  }
+
+  async function sheetForExport() {
+    if (!openReport) {
+      return {
+        filename: fileSlug(heading),
+        title: heading,
+        subtitle: `Isarva Nethra · ${visibleReports.length} reports`,
+        headers: ["Report name", "Report category", "Created by", "Last visited"],
+        rows: visibleReports.map((item) => [
+          item.name,
+          categoryLabel(item.category),
+          "System Generated",
+          formatVisit(visits[item.id]),
+        ]),
+      };
+    }
+    if (openReport.kind === "export") {
+      const csv = await fetchEventsCsv(
         buildReportBody(openReport, {
           start: startDate,
           end: endDate,
@@ -743,9 +777,33 @@ export default function Reports() {
           rangeId: range,
         })
       );
-      toast.success("CSV download started");
+      return sheetFromCsv({
+        filename: "incident_report",
+        title: openReport.name,
+        subtitle: `${categoryLabel(openReport.category)} · ${exportSubtitle()}`,
+        csv,
+      });
+    }
+    return buildReportSheet({
+      report: openReport,
+      category: categoryLabel(openReport.category),
+      table,
+      previousTable,
+      tableQuery,
+      subtitle: exportSubtitle(),
+    });
+  }
+
+  async function exportAs(format) {
+    setExporting(format);
+    try {
+      const sheet = await sheetForExport();
+      if (format === "excel") await downloadExcelReport(sheet);
+      else if (format === "pdf") await downloadPdfReport(sheet);
+      else downloadCsv(`${sheet.filename}.csv`, sheet.headers, sheet.rows);
+      toast.success(format === "excel" ? "Excel file downloaded" : format === "pdf" ? "PDF downloaded" : "CSV downloaded");
     } catch (err) {
-      toast.error(err.message || "Could not export CSV");
+      toast.error(err.message || "Could not export this report");
     } finally {
       setExporting(false);
     }
@@ -757,40 +815,15 @@ export default function Reports() {
   );
   const previousTable = useMemo(() => toTable(previous), [previous]);
 
-  function exportVisible() {
-    if (!openReport) {
-      downloadCsv(
-        "reports.csv",
-        ["Report name", "Report category", "Created by", "Last visited"],
-        visibleReports.map((item) => [
-          item.name,
-          categoryLabel(item.category),
-          "System Generated",
-          formatVisit(visits[item.id]),
-        ])
-      );
-      return;
-    }
-    if (openReport.kind === "export") {
-      exportCurrent();
-      return;
-    }
-    const columns = table.columns.filter((column) => !["key", "raw", "points"].includes(column));
-    downloadCsv(
-      `${openReport.name}.csv`,
-      columns.map((column) => column.replaceAll("_", " ")),
-      table.rows.map((row) => columns.map((column) => formatCell(row[column])))
-    );
-  }
-
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
       <ReportPageHeader
         report={openReport}
         favorited={Boolean(openReport && favorites.includes(openReport.id))}
         onFavorite={toggleFavorite}
-        onExport={exportVisible}
+        onExport={exportAs}
         exporting={exporting}
+        exportDisabled={Boolean(openReport?.path && (loading || error))}
       />
       <section className="grid min-h-[32rem] flex-1 grid-cols-1 overflow-hidden rounded-[18px] border border-line bg-panel shadow-[0_8px_24px_rgba(15,42,74,0.06)] lg:grid-cols-[240px_minmax(0,1fr)]">
         <ReportSidebar
@@ -842,8 +875,9 @@ export default function Reports() {
               loading={loading}
               error={error}
               onRetry={loadReport}
-              onExport={exportVisible}
+              onExport={exportAs}
               exporting={exporting}
+              exportDisabled={Boolean(loading || error)}
               page={page}
               pageSize={pageSize}
               onPage={setPage}

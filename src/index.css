@@ -166,6 +166,20 @@
     transition: background-color 0.25s ease, color 0.25s ease;
   }
 
+  /* Keep every panel scrollable, including the sidebar, without a visible bar. */
+  html,
+  body,
+  * {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  *::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+    display: none;
+  }
+
   a {
     @apply text-inherit no-underline;
   }

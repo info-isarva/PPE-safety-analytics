@@ -64,8 +64,7 @@ export function getReportStats(path, params = {}, { signal } = {}) {
   return apiFetch(withQuery(path, params), { signal });
 }
 
-/** Download filtered events with POST /events/export/csv. The response is a CSV file. */
-export async function downloadEventsCsv(params = {}) {
+async function requestEventsCsv(params = {}) {
   const response = await fetch(`${API_BASE_URL}/events/export/csv`, {
     method: "POST",
     headers: {
@@ -78,13 +77,24 @@ export async function downloadEventsCsv(params = {}) {
   if (!response.ok) {
     throw new Error(`Export failed (${response.status})`);
   }
-  const blob = await response.blob();
+  return response.text();
+}
+
+/** Download filtered events with POST /events/export/csv. The response is a CSV file. */
+export async function downloadEventsCsv(params = {}) {
+  const text = await requestEventsCsv(params);
+  const blob = new Blob([text], { type: "text/csv;charset=utf-8" });
   const objectUrl = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = objectUrl;
   link.download = "incident_report.csv";
   link.click();
   URL.revokeObjectURL(objectUrl);
+}
+
+/** Same filtered event export, returned as CSV text for Excel and PDF. */
+export function fetchEventsCsv(params = {}) {
+  return requestEventsCsv(params);
 }
 
 export function getComplianceStats() {
